@@ -66,6 +66,13 @@ export class DockerManager {
     await this.dockerExec(`docker stop ${name} 2>/dev/null || true`);
   }
 
+  async restartContainer(name: string): Promise<void> {
+    const result = await this.dockerExec(`docker restart ${name}`);
+    if (result.code !== 0) {
+      throw new Error(`Failed to restart container: ${result.stderr}`);
+    }
+  }
+
   async removeContainer(name: string): Promise<void> {
     // Silently fail if container doesn't exist
     await this.dockerExec(`docker rm ${name} 2>/dev/null || true`);

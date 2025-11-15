@@ -95,7 +95,11 @@ export class GarageCluster {
     }
   }
 
-  private generateGarageConfig(node: NodeConfig): string {
+  private generateGarageConfig(node: NodeConfig, bootstrapPeers: string[] = []): string {
+    const peersConfig = bootstrapPeers.length > 0
+      ? `bootstrap_peers = [\n  "${bootstrapPeers.join('",\n  "')}"\n]`
+      : `bootstrap_peers = []`;
+      
     return `
 metadata_dir = "${this.config.metaDir}"
 data_dir = "${this.config.dataDir}"
@@ -109,8 +113,8 @@ rpc_bind_addr = "[::]:3901"
 rpc_public_addr = "${node.host}:3901"
 rpc_secret = "${this.config.rpcSecret}"
 
-# Bootstrap peers will be configured after both nodes are up
-bootstrap_peers = []
+# Bootstrap peers for automatic node discovery on restart
+${peersConfig}
 
 [s3_api]
 s3_region = "garage"
@@ -156,6 +160,11 @@ services:
     const nodeIds = await this.getNodeIds();
     console.log(dim(`  Node 1 ID: ${nodeIds[0].substring(0, 16)}...`));
     console.log(dim(`  Node 2 ID: ${nodeIds[1].substring(0, 16)}...`));
+
+    // Update configs with bootstrap peers now that we have node IDs
+    console.log("\nUpdating bootstrap peers...");
+    await this.updateBootstrapPeers(nodeIds);
+    console.log(green("✓ Bootstrap peers configured"));
 
     // Connect nodes
     console.log("\nConnecting nodes...");
@@ -204,6 +213,56 @@ services:
     }
 
     return ids;
+  }
+
+  private async updateBootstrapPeers(nodeIds: string[]): Promise<void> {
+    // Build bootstrap peers list
+    // Format: "nodeId@host:port"
+    const bootstrapPeers = [
+      `${nodeIds[0]}@${this.nodes[0].host}:3901`,
+      `${nodeIds[1]}@${this.nodes[1].host}:3901`
+    ];
+
+    const workdir = "/opt/garage";
+
+    // Update config on each node
+    for (let i = 0; i < this.nodes.length; i++) {
+      const node = this.nodes[i];
+      const docker = new DockerManager(node.connection!);
+      await docker.detectSudoRequirement();
+
+      // Generate new config with bootstrap peers
+      const garageConfig = this.generateGarageConfig(node, bootstrapPeers);
+      
+      // Write updated config
+      await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
+      
+      const uidResult = await node.connection!.exec("id -u");
+      const gidResult = await node.connection!.exec("id -g");
+      const uid = uidResult.stdout.trim();
+      const gid = gidResult.stdout.trim();
+      await node.connection!.exec(`sudo chown ${uid}:${gid} ${workdir}/garage.toml`);
+
+      // Restart container to pick up new config
+      console.log(dim(`  Restarting ${node.name} with updated config...`));
+      try {
+        await docker.restartContainer("garage");
+      } catch (error: any) {
+        console.log(yellow(`  Warning: Restart failed (${error.message}), trying stop/start...`));
+        await docker.stopContainer("garage");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Container should auto-restart via docker-compose restart policy
+      }
+      
+      // Wait a moment for restart
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Verify container is back up
+      const healthy = await docker.waitForHealthy("garage", 30);
+      if (!healthy) {
+        throw new Error(`${node.name} failed to restart after config update`);
+      }
+    }
   }
 
   private async connectNodes(nodeIds: string[]): Promise<void> {
