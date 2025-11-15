@@ -168,6 +168,7 @@ services:
 
     for (const node of this.nodes) {
       const docker = new DockerManager(node.connection!);
+      await docker.detectSudoRequirement();
       const result = await docker.execInContainer("garage", "garage node id");
       
       if (result.code !== 0) {
@@ -189,6 +190,7 @@ services:
   private async connectNodes(nodeIds: string[]): Promise<void> {
     // Connect node1 to node2
     const docker1 = new DockerManager(this.nodes[0].connection!);
+    await docker1.detectSudoRequirement();
     const connectCmd = `garage node connect ${nodeIds[1]}@${this.nodes[1].host}:3901`;
     
     const result = await docker1.execInContainer("garage", connectCmd);
@@ -200,6 +202,7 @@ services:
 
   private async configureLayout(nodeIds: string[]): Promise<void> {
     const docker = new DockerManager(this.nodes[0].connection!);
+    await docker.detectSudoRequirement();
 
     // Assign node1 to zone1
     const assign1Cmd = `garage layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
@@ -217,8 +220,23 @@ services:
       throw new Error(`Failed to assign node2: ${result2.stderr}`);
     }
 
-    // Apply layout
-    const applyCmd = "garage layout apply --version 1";
+    // Get current layout version
+    const layoutShowResult = await docker.execInContainer("garage", "garage layout show");
+    
+    if (layoutShowResult.code !== 0) {
+      throw new Error(`Failed to get layout: ${layoutShowResult.stderr}`);
+    }
+
+    // Parse version from layout show output
+    // Look for "Current cluster layout version: X" or similar
+    let layoutVersion = 1; // Default for initial setup
+    const versionMatch = layoutShowResult.stdout.match(/version[:\s]+(\d+)/i);
+    if (versionMatch) {
+      layoutVersion = parseInt(versionMatch[1]) + 1;
+    }
+
+    // Apply layout with correct version
+    const applyCmd = `garage layout apply --version ${layoutVersion}`;
     const result3 = await docker.execInContainer("garage", applyCmd);
     
     if (result3.code !== 0) {
@@ -228,6 +246,7 @@ services:
 
   private async getClusterStatus(): Promise<string> {
     const docker = new DockerManager(this.nodes[0].connection!);
+    await docker.detectSudoRequirement();
     const result = await docker.execInContainer("garage", "garage status");
     
     if (result.code !== 0) {
