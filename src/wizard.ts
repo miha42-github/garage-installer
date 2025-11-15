@@ -147,16 +147,36 @@ export class Wizard {
     }
   }
 
+  private isValidHostOrIP(value: string): boolean {
+    if (!value) return false;
+
+    // Check for hostname
+    const hostnameRegex = /^[\w\-.]+$/;
+    
+    // Check for IPv4
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    
+    // Check for IPv6 (simplified - supports standard and compressed forms)
+    const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+    
+    // Also support IPv6 with brackets for ports (e.g., [::1])
+    const ipv6BracketRegex = /^\[([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]$/;
+
+    return hostnameRegex.test(value) || 
+           ipv4Regex.test(value) || 
+           ipv6Regex.test(value) ||
+           ipv6BracketRegex.test(value);
+  }
+
   private async collectNodeInfo() {
     // Node 1
     console.log(bold("\nNode 1 Configuration:"));
     
     const host1 = await Input.prompt({
-      message: "Hostname or IP address:",
+      message: "Hostname or IP address (IPv4/IPv6 supported):",
       validate: (value) => {
         if (!value) return "Hostname is required";
-        // Basic validation
-        if (!/^[\w\-.]+$/.test(value) && !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) {
+        if (!this.isValidHostOrIP(value)) {
           return "Invalid hostname or IP address";
         }
         return true;
@@ -219,9 +239,10 @@ export class Wizard {
 
     if (sameCredentials) {
       const host2 = await Input.prompt({
-        message: "Hostname or IP address:",
+        message: "Hostname or IP address (IPv4/IPv6 supported):",
         validate: (value) => {
           if (!value) return "Hostname is required";
+          if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
           if (value === host1) return "Node 2 must have different hostname than Node 1";
           return true;
         },
@@ -239,7 +260,13 @@ export class Wizard {
     } else {
       // Repeat full config for node 2
       const host2 = await Input.prompt({
-        message: "Hostname or IP address:",
+        message: "Hostname or IP address (IPv4/IPv6 supported):",
+        validate: (value) => {
+          if (!value) return "Hostname is required";
+          if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
+          if (value === host1) return "Node 2 must have different hostname than Node 1";
+          return true;
+        },
       });
 
       const port2 = await NumberPrompt.prompt({
