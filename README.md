@@ -13,6 +13,11 @@ Interactive wizard that deploys a production-ready Garage S3-compatible object s
 - ✅ Complete cluster configuration
 - ✅ Single compiled binary - no dependencies
 - ✅ Cross-platform (Linux, macOS, Windows)
+- ✅ Progress indicators for long operations
+- ✅ Comprehensive logging for troubleshooting
+- ✅ Automatic rollback on failure
+- ✅ IPv6 and dual-stack support
+- ✅ Configurable ports and paths
 
 ## Quick Start
 
@@ -201,6 +206,9 @@ deno task compile-linux
 # macOS binary
 deno task compile-macos
 
+# Windows binary
+deno task compile-windows
+
 # All platforms
 deno task build-all
 ```
@@ -231,6 +239,26 @@ garage-installer (Deno binary)
         ├── Apply layout
         └── Verify health
 ```
+
+## Key Features
+
+### Reliability
+- **Automatic rollback** - Cleanup system removes partial deployments on failure
+- **Dynamic sudo detection** - Handles Docker permissions automatically
+- **Connectivity testing** - Validates inter-node communication before deployment
+- **Bootstrap peers** - Nodes automatically reconnect after restarts
+
+### User Experience
+- **Progress indicators** - Visual spinners for long-running operations
+- **File logging** - Complete audit trail in `garage-installer.log`
+- **Input validation** - Bounds checking and helpful error messages
+- **Version warnings** - Alerts about untested Garage versions
+
+### Flexibility
+- **Configurable ports** - Customize all service ports (default: 3900-3903)
+- **Configurable paths** - Change data/metadata directories
+- **IPv6 support** - Works with IPv4, IPv6, and dual-stack networks
+- **Cross-platform** - Runs on Linux, macOS, and Windows
 
 ## Security
 
