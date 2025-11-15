@@ -11,10 +11,18 @@ export class SSHConnection {
   private client: Client;
   private config: NodeConfig;
   private connected: boolean = false;
+  private defaultTimeout: number = 30000; // 30 seconds
 
   constructor(config: NodeConfig) {
     this.config = config;
     this.client = new Client();
+  }
+
+  /**
+   * Get a descriptive identifier for this connection (for error messages)
+   */
+  private getConnectionContext(): string {
+    return `${this.config.username}@${this.config.host}:${this.config.port}`;
   }
 
   async connect(): Promise<void> {
@@ -23,14 +31,17 @@ export class SSHConnection {
         host: this.config.host,
         port: this.config.port,
         username: this.config.username,
+        readyTimeout: this.defaultTimeout,
       };
 
       if (this.config.authMethod === "key") {
         try {
           const keyData = Deno.readTextFileSync(this.config.keyPath!);
           connectionConfig.privateKey = keyData;
-        } catch (error) {
-          reject(new Error(`Failed to read SSH key: ${error.message}`));
+        } catch (error: any) {
+          reject(new Error(
+            `[${this.getConnectionContext()}] Failed to read SSH key from ${this.config.keyPath}: ${error.message}`
+          ));
           return;
         }
       } else {
@@ -42,23 +53,46 @@ export class SSHConnection {
         resolve();
       });
 
-      this.client.on("error", (err) => {
-        reject(new Error(`SSH connection failed: ${err.message}`));
+      this.client.on("error", (err: any) => {
+        reject(new Error(
+          `[${this.getConnectionContext()}] SSH connection failed: ${err.message}`
+        ));
+      });
+
+      this.client.on("timeout", () => {
+        reject(new Error(
+          `[${this.getConnectionContext()}] SSH connection timeout after ${this.defaultTimeout}ms`
+        ));
       });
 
       this.client.connect(connectionConfig);
     });
   }
 
-  async exec(command: string): Promise<ExecResult> {
+  async exec(command: string, timeoutMs?: number): Promise<ExecResult> {
     if (!this.connected) {
-      throw new Error("Not connected");
+      throw new Error(`[${this.getConnectionContext()}] Not connected`);
     }
 
+    const timeout = timeoutMs || this.defaultTimeout;
+
     return new Promise((resolve, reject) => {
-      this.client.exec(command, (err, stream) => {
+      let timedOut = false;
+      
+      // Set timeout
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        reject(new Error(
+          `[${this.getConnectionContext()}] Command timeout after ${timeout}ms: ${command.substring(0, 50)}...`
+        ));
+      }, timeout);
+
+      this.client.exec(command, (err: any, stream: any) => {
         if (err) {
-          reject(new Error(`Exec failed: ${err.message}`));
+          clearTimeout(timeoutHandle);
+          reject(new Error(
+            `[${this.getConnectionContext()}] Exec failed: ${err.message}`
+          ));
           return;
         }
 
@@ -66,7 +100,10 @@ export class SSHConnection {
         let stderr = "";
 
         stream.on("close", (code: number) => {
-          resolve({ stdout, stderr, code });
+          clearTimeout(timeoutHandle);
+          if (!timedOut) {
+            resolve({ stdout, stderr, code });
+          }
         });
 
         stream.on("data", (data: Buffer) => {
@@ -83,22 +120,26 @@ export class SSHConnection {
   async test(): Promise<void> {
     const result = await this.exec("echo 'connection_test'");
     if (result.code !== 0 || !result.stdout.includes("connection_test")) {
-      throw new Error("Connection test failed");
+      throw new Error(
+        `[${this.getConnectionContext()}] Connection test failed`
+      );
     }
   }
 
   async uploadFile(localPath: string, remotePath: string): Promise<void> {
     if (!this.connected) {
-      throw new Error("Not connected");
+      throw new Error(`[${this.getConnectionContext()}] Not connected`);
     }
 
     // Read file asynchronously
     const fileData = await Deno.readFile(localPath);
 
     return new Promise((resolve, reject) => {
-      this.client.sftp((err, sftp) => {
+      this.client.sftp((err: any, sftp: any) => {
         if (err) {
-          reject(new Error(`SFTP failed: ${err.message}`));
+          reject(new Error(
+            `[${this.getConnectionContext()}] SFTP failed: ${err.message}`
+          ));
           return;
         }
 
@@ -108,8 +149,10 @@ export class SSHConnection {
           resolve();
         });
 
-        writeStream.on("error", (error) => {
-          reject(new Error(`Upload failed: ${error.message}`));
+        writeStream.on("error", (error: any) => {
+          reject(new Error(
+            `[${this.getConnectionContext()}] Upload failed (${localPath} -> ${remotePath}): ${error.message}`
+          ));
         });
 
         // Write the file data buffer and close the stream
@@ -121,13 +164,15 @@ export class SSHConnection {
 
   async downloadFile(remotePath: string, localPath: string): Promise<void> {
     if (!this.connected) {
-      throw new Error("Not connected");
+      throw new Error(`[${this.getConnectionContext()}] Not connected`);
     }
 
     return new Promise((resolve, reject) => {
-      this.client.sftp((err, sftp) => {
+      this.client.sftp((err: any, sftp: any) => {
         if (err) {
-          reject(new Error(`SFTP failed: ${err.message}`));
+          reject(new Error(
+            `[${this.getConnectionContext()}] SFTP failed: ${err.message}`
+          ));
           return;
         }
 
@@ -150,8 +195,10 @@ export class SSHConnection {
           resolve();
         });
 
-        readStream.on("error", (error) => {
-          reject(new Error(`Download failed: ${error.message}`));
+        readStream.on("error", (error: any) => {
+          reject(new Error(
+            `[${this.getConnectionContext()}] Download failed (${remotePath} -> ${localPath}): ${error.message}`
+          ));
         });
       });
     });
@@ -175,7 +222,9 @@ EOF_MARKER`;
     
     const result = await this.exec(command);
     if (result.code !== 0) {
-      throw new Error(`Failed to write file: ${result.stderr}`);
+      throw new Error(
+        `[${this.getConnectionContext()}] Failed to write file ${remotePath}: ${result.stderr}`
+      );
     }
   }
 
