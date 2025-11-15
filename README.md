@@ -55,6 +55,7 @@ That's it! The wizard will guide you through:
 - SSH client
 - Network access to both nodes
 - SSH credentials (key or password)
+- **No other dependencies needed** - the installer is a single binary
 
 ### Remote Nodes (where Garage will run)
 - Ubuntu 20.04+ or Debian 11+ (recommended)
@@ -62,17 +63,21 @@ That's it! The wizard will guide you through:
 - Same user account on both nodes
 - At least 16GB disk space per node
 - Ports 3900-3903 available
+- Internet access to pull Docker images
 
 **The installer will automatically:**
 - Install Docker if not present
 - Install Docker Compose if not present
+- Download Garage Docker image from Docker Hub
 - Configure Docker permissions
 - Set up all required directories
 - Deploy and configure Garage cluster
 
 ## What Gets Installed
 
-On each node:
+On each node, the installer will:
+1. **Download Garage Docker image** - `dxflrs/garage:v2.1.0` (default, configurable)
+2. **Create directory structure:**
 ```
 /opt/garage/
 ├── docker-compose.yml
@@ -189,11 +194,28 @@ docker compose up -d
 ## Development
 
 ### Prerequisites
-- Deno 1.40+
+
+**Deno 1.40+** is required to build from source.
+
+Install Deno:
+```bash
+# macOS / Linux
+curl -fsSL https://deno.land/install.sh | sh
+
+# Windows (PowerShell)
+irm https://deno.land/install.ps1 | iex
+
+# Or via package managers:
+# macOS: brew install deno
+# Linux: snap install deno
+# Windows: choco install deno
+```
+
+See https://deno.land/manual/getting_started/installation for more options.
 
 ### Run from source
 ```bash
-git clone https://github.com/YOUR_USERNAME/garage-installer.git
+git clone https://github.com/miha42-github/garage-installer.git
 cd garage-installer
 deno task dev
 ```
