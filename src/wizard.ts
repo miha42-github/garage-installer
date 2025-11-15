@@ -5,6 +5,18 @@ import { SystemChecker } from "./checks/system.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
+import { CleanupManager } from "./cleanup.ts";
+import { withSpinner } from "./ui/spinner.ts";
+import { initLogger, getLogger } from "./logger.ts";
+import {
+  DEFAULT_PORTS,
+  DEFAULT_PATHS,
+  DEFAULT_GARAGE_VERSION,
+  DEFAULT_REPLICATION_FACTOR,
+  DEFAULT_CAPACITY,
+  KNOWN_GOOD_VERSIONS,
+  MINIMUM_VERSION,
+} from "./constants.ts";
 
 export interface NodeConfig {
   name: string;
@@ -22,21 +34,35 @@ export interface ClusterConfig {
   capacityPerNode: string;
   dataDir: string;
   metaDir: string;
+  workdir: string;
   garageVersion: string;
   replicationFactor: number;
+  ports: {
+    s3Api: number;
+    rpc: number;
+    s3Web: number;
+    admin: number;
+  };
 }
 
 export class Wizard {
   private display: DisplayManager;
+  private cleanupManager: CleanupManager;
   private node1?: NodeConfig;
   private node2?: NodeConfig;
   private clusterConfig?: ClusterConfig;
 
   constructor() {
     this.display = new DisplayManager();
+    this.cleanupManager = new CleanupManager();
   }
 
   async run() {
+    // Initialize logging
+    const logger = initLogger();
+    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
+    await logger.info("=== Garage Installer Started ===");
+
     console.log(bold("This wizard will guide you through installing a 2-node Garage cluster.\n"));
     console.log("You'll need:");
     console.log("  • Two Ubuntu/Debian servers with SSH access");
@@ -51,49 +77,95 @@ export class Wizard {
 
     if (!proceed) {
       console.log(yellow("Installation cancelled."));
+      await logger.info("Installation cancelled by user");
       return;
     }
 
     try {
       // Phase 1: Node Discovery
       console.log(bold(cyan("\n=== Phase 1: Node Configuration ===")));
+      await logger.info("Phase 1: Node Configuration started");
       await this.collectNodeInfo();
 
       // Phase 2: SSH Connectivity
       console.log(bold(cyan("\n=== Phase 2: Testing Connectivity ===")));
+      await logger.info("Phase 2: Testing Connectivity started");
       await this.testConnectivity();
 
       // Phase 3: Preflight Checks
       console.log(bold(cyan("\n=== Phase 3: System Checks ===")));
+      await logger.info("Phase 3: System Checks started");
       await this.runPreflightChecks();
 
       // Phase 4: Cluster Configuration
       console.log(bold(cyan("\n=== Phase 4: Cluster Configuration ===")));
+      await logger.info("Phase 4: Cluster Configuration started");
       await this.configureCluster();
 
       // Phase 5: Deployment Summary
       console.log(bold(cyan("\n=== Phase 5: Deployment Summary ===")));
+      await logger.info("Phase 5: Deployment Summary");
       await this.showSummary();
 
       // Phase 6: Deploy
       console.log(bold(cyan("\n=== Phase 6: Deploying Garage ===")));
+      await logger.info("Phase 6: Deploying Garage started");
       await this.deployCluster();
 
       // Phase 7: Post-Install
       console.log(bold(cyan("\n=== Phase 7: Finalizing ===")));
+      await logger.info("Phase 7: Finalizing started");
       await this.postInstall();
 
       console.log(green(bold("\n✓ Installation complete!")));
+      await logger.info("Installation completed successfully");
       this.showSuccessMessage();
 
-    } catch (error) {
+    } catch (error: any) {
+      await logger.error("Installation failed", { error: error.message, stack: error.stack });
       console.error(red(bold("\n✖ Installation failed:")), error.message);
-      console.error(dim("\nFor troubleshooting, check the logs above."));
+      console.error(dim(`\nFor troubleshooting, check the log file: ${logger.getLogPath()}`));
+      
+      // Offer to cleanup if anything was deployed
+      if (this.cleanupManager.hasDeploymentState()) {
+        const shouldCleanup = await Confirm.prompt({
+          message: "Would you like to rollback and clean up what was deployed?",
+          default: true,
+        });
+
+        if (shouldCleanup) {
+          await this.cleanupManager.cleanupAll([this.node1!, this.node2!].filter(n => n));
+        } else {
+          this.cleanupManager.displayManualCleanupInstructions([this.node1!, this.node2!].filter(n => n));
+        }
+      }
+      
       throw error;
     } finally {
       // Clean up SSH connections
-      await this.cleanup();
+      await this.closeConnections();
     }
+  }
+
+  private isValidHostOrIP(value: string): boolean {
+    if (!value) return false;
+
+    // Check for hostname
+    const hostnameRegex = /^[\w\-.]+$/;
+    
+    // Check for IPv4
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    
+    // Check for IPv6 (simplified - supports standard and compressed forms)
+    const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+    
+    // Also support IPv6 with brackets for ports (e.g., [::1])
+    const ipv6BracketRegex = /^\[([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]$/;
+
+    return hostnameRegex.test(value) || 
+           ipv4Regex.test(value) || 
+           ipv6Regex.test(value) ||
+           ipv6BracketRegex.test(value);
   }
 
   private async collectNodeInfo() {
@@ -101,11 +173,10 @@ export class Wizard {
     console.log(bold("\nNode 1 Configuration:"));
     
     const host1 = await Input.prompt({
-      message: "Hostname or IP address:",
+      message: "Hostname or IP address (IPv4/IPv6 supported):",
       validate: (value) => {
         if (!value) return "Hostname is required";
-        // Basic validation
-        if (!/^[\w\-.]+$/.test(value) && !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) {
+        if (!this.isValidHostOrIP(value)) {
           return "Invalid hostname or IP address";
         }
         return true;
@@ -168,9 +239,10 @@ export class Wizard {
 
     if (sameCredentials) {
       const host2 = await Input.prompt({
-        message: "Hostname or IP address:",
+        message: "Hostname or IP address (IPv4/IPv6 supported):",
         validate: (value) => {
           if (!value) return "Hostname is required";
+          if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
           if (value === host1) return "Node 2 must have different hostname than Node 1";
           return true;
         },
@@ -188,7 +260,13 @@ export class Wizard {
     } else {
       // Repeat full config for node 2
       const host2 = await Input.prompt({
-        message: "Hostname or IP address:",
+        message: "Hostname or IP address (IPv4/IPv6 supported):",
+        validate: (value) => {
+          if (!value) return "Hostname is required";
+          if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
+          if (value === host1) return "Node 2 must have different hostname than Node 1";
+          return true;
+        },
       });
 
       const port2 = await NumberPrompt.prompt({
@@ -242,17 +320,15 @@ export class Wizard {
     const nodes = [this.node1!, this.node2!];
 
     for (const node of nodes) {
-      console.log(`\nTesting connection to ${bold(node.name)} (${node.host})...`);
-      
-      try {
-        const ssh = new SSHConnection(node);
-        await ssh.connect();
-        await ssh.test();
-        node.connection = ssh;
-        console.log(green(`✓ Connected to ${node.name}`));
-      } catch (error) {
-        throw new Error(`Failed to connect to ${node.name}: ${error.message}`);
-      }
+      await withSpinner(
+        `Connecting to ${node.name} (${node.host})`,
+        async () => {
+          const ssh = new SSHConnection(node);
+          await ssh.connect();
+          await ssh.test();
+          node.connection = ssh;
+        }
+      );
     }
 
     console.log(green("\n✓ All nodes reachable"));
@@ -302,14 +378,66 @@ export class Wizard {
   }
 
   private async testInterNodeConnectivity(): Promise<boolean> {
-    try {
-      const result = await this.node1!.connection!.exec(
-        `ping -c 1 -W 2 ${this.node2!.host}`
-      );
-      return result.code === 0;
-    } catch {
-      return false;
+    // Test RPC port (3901) connectivity in both directions
+    const ports = [3901]; // Main RPC port that needs to be accessible
+    
+    console.log("  Testing node1 -> node2...");
+    for (const port of ports) {
+      try {
+        // Try netcat first (most common)
+        let result = await this.node1!.connection!.exec(
+          `timeout 5 nc -zv ${this.node2!.host} ${port} 2>&1 || echo "FAILED"`,
+          10000 // 10 second timeout
+        );
+        
+        // If nc not available, try bash TCP test
+        if (result.stdout.includes("not found") || result.stdout.includes("FAILED")) {
+          result = await this.node1!.connection!.exec(
+            `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/${this.node2!.host}/${port}' 2>&1 && echo "SUCCESS" || echo "FAILED"`,
+            10000
+          );
+        }
+        
+        if (result.stdout.includes("FAILED") || result.code !== 0) {
+          console.log(red(`  ✖ Cannot reach ${this.node2!.host}:${port} from node1`));
+          return false;
+        }
+      } catch (error: any) {
+        console.log(red(`  ✖ Error testing connectivity: ${error.message}`));
+        return false;
+      }
     }
+    console.log(green("  ✓ node1 can reach node2"));
+
+    console.log("  Testing node2 -> node1...");
+    for (const port of ports) {
+      try {
+        // Try netcat first
+        let result = await this.node2!.connection!.exec(
+          `timeout 5 nc -zv ${this.node1!.host} ${port} 2>&1 || echo "FAILED"`,
+          10000
+        );
+        
+        // If nc not available, try bash TCP test
+        if (result.stdout.includes("not found") || result.stdout.includes("FAILED")) {
+          result = await this.node2!.connection!.exec(
+            `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/${this.node1!.host}/${port}' 2>&1 && echo "SUCCESS" || echo "FAILED"`,
+            10000
+          );
+        }
+        
+        if (result.stdout.includes("FAILED") || result.code !== 0) {
+          console.log(red(`  ✖ Cannot reach ${this.node1!.host}:${port} from node2`));
+          return false;
+        }
+      } catch (error: any) {
+        console.log(red(`  ✖ Error testing connectivity: ${error.message}`));
+        return false;
+      }
+    }
+    console.log(green("  ✓ node2 can reach node1"));
+
+    return true;
   }
 
   private async configureCluster() {
@@ -317,29 +445,115 @@ export class Wizard {
 
     const capacity = await Input.prompt({
       message: "Storage capacity per node (e.g., 10G, 100G, 1T):",
-      default: "10G",
-      validate: (value) => {
+      default: DEFAULT_CAPACITY,
+      validate: (value: string) => {
         if (!/^\d+[KMGT]$/.test(value)) {
           return "Invalid format. Use: 10G, 100G, 1T, etc.";
         }
+        
+        // Parse and validate reasonable bounds
+        const match = value.match(/^(\d+)([KMGT])$/);
+        if (match) {
+          const amount = parseInt(match[1]);
+          const unit = match[2];
+          
+          // Convert to GB for comparison
+          let capacityGB = amount;
+          if (unit === 'K') capacityGB = amount / (1024 * 1024);
+          else if (unit === 'M') capacityGB = amount / 1024;
+          else if (unit === 'T') capacityGB = amount * 1024;
+          
+          // Check bounds
+          if (capacityGB < 1) {
+            return "Capacity too small. Minimum 1GB recommended.";
+          }
+          if (capacityGB > 100000) { // 100TB
+            return "Capacity seems unusually large. Please verify.";
+          }
+          
+          // Warn if very small
+          if (capacityGB < 5) {
+            console.log(yellow("\n  ⚠ Warning: Small capacity may limit cluster functionality."));
+          }
+        }
+        
         return true;
       },
     });
 
-    const dataDir = await Input.prompt({
-      message: "Data directory path:",
-      default: "/var/lib/garage/data",
+    // Ask if user wants advanced configuration
+    const advancedConfig = await Confirm.prompt({
+      message: "Configure advanced settings (ports, paths)?",
+      default: false,
     });
 
-    const metaDir = await Input.prompt({
-      message: "Metadata directory path:",
-      default: "/var/lib/garage/meta",
-    });
+    let dataDir = DEFAULT_PATHS.dataDir;
+    let metaDir = DEFAULT_PATHS.metaDir;
+    let workdir = DEFAULT_PATHS.workdir;
+    let garageVersion = DEFAULT_GARAGE_VERSION;
+    let ports = { ...DEFAULT_PORTS };
 
-    const garageVersion = await Input.prompt({
-      message: "Garage version:",
-      default: "v2.1.0",
-    });
+    if (advancedConfig) {
+      console.log(cyan("\n--- Advanced Configuration ---\n"));
+      
+      workdir = await Input.prompt({
+        message: "Working directory path:",
+        default: DEFAULT_PATHS.workdir,
+      });
+
+      dataDir = await Input.prompt({
+        message: "Data directory path:",
+        default: DEFAULT_PATHS.dataDir,
+      });
+
+      metaDir = await Input.prompt({
+        message: "Metadata directory path:",
+        default: DEFAULT_PATHS.metaDir,
+      });
+
+      garageVersion = await Input.prompt({
+        message: "Garage version:",
+        default: DEFAULT_GARAGE_VERSION,
+      });
+
+      // Validate and warn about version
+      this.validateGarageVersion(garageVersion);
+
+      const customPorts = await Confirm.prompt({
+        message: "Customize ports?",
+        default: false,
+      });
+
+      if (customPorts) {
+        ports.s3Api = await NumberPrompt.prompt({
+          message: "S3 API port:",
+          default: DEFAULT_PORTS.s3Api,
+          min: 1,
+          max: 65535,
+        });
+
+        ports.rpc = await NumberPrompt.prompt({
+          message: "RPC port:",
+          default: DEFAULT_PORTS.rpc,
+          min: 1,
+          max: 65535,
+        });
+
+        ports.s3Web = await NumberPrompt.prompt({
+          message: "S3 Web port:",
+          default: DEFAULT_PORTS.s3Web,
+          min: 1,
+          max: 65535,
+        });
+
+        ports.admin = await NumberPrompt.prompt({
+          message: "Admin API port:",
+          default: DEFAULT_PORTS.admin,
+          min: 1,
+          max: 65535,
+        });
+      }
+    }
 
     // Generate RPC secret
     const rpcSecret = this.generateRPCSecret();
@@ -350,8 +564,10 @@ export class Wizard {
       capacityPerNode: capacity,
       dataDir,
       metaDir,
+      workdir,
       garageVersion,
-      replicationFactor: 2,
+      replicationFactor: DEFAULT_REPLICATION_FACTOR,
+      ports,
     };
 
     console.log(green("\n✓ Cluster configured"));
@@ -395,7 +611,8 @@ export class Wizard {
   private async deployCluster() {
     const garage = new GarageCluster(
       [this.node1!, this.node2!],
-      this.clusterConfig!
+      this.clusterConfig!,
+      this.cleanupManager
     );
 
     // Deploy to each node
@@ -452,7 +669,36 @@ export class Wizard {
     console.log("\n");
   }
 
-  private async cleanup() {
+  private validateGarageVersion(version: string): void {
+    // Compare versions (simple string comparison works for semver-like versions)
+    const compareVersions = (a: string, b: string): number => {
+      const aParts = a.replace('v', '').split('.').map(Number);
+      const bParts = b.replace('v', '').split('.').map(Number);
+      
+      for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const aPart = aParts[i] || 0;
+        const bPart = bParts[i] || 0;
+        if (aPart > bPart) return 1;
+        if (aPart < bPart) return -1;
+      }
+      return 0;
+    };
+
+    // Check if version is too old
+    if (compareVersions(version, MINIMUM_VERSION) < 0) {
+      console.log(yellow(`\n  ⚠ Warning: Version ${version} is older than the minimum recommended version (${MINIMUM_VERSION}).`));
+      console.log(yellow(`    Consider upgrading to ${DEFAULT_GARAGE_VERSION} for better stability and features.`));
+    }
+
+    // Check if it's a known good version
+    if (!KNOWN_GOOD_VERSIONS.includes(version as any)) {
+      console.log(yellow(`\n  ℹ Note: Version ${version} is not in the list of tested versions.`));
+      console.log(yellow(`    Known stable versions: ${KNOWN_GOOD_VERSIONS.join(', ')}`));
+      console.log(yellow(`    This version may work but hasn't been extensively tested with this installer.`));
+    }
+  }
+
+  private async closeConnections() {
     // Close SSH connections
     if (this.node1?.connection) {
       await this.node1.connection.close();
