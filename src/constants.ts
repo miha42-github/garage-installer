@@ -17,6 +17,17 @@ export const DEFAULT_PATHS = {
 
 export const DEFAULT_GARAGE_VERSION = "v2.1.0";
 
+// Known stable Garage versions (most recent ones)
+export const KNOWN_GOOD_VERSIONS = [
+  "v2.1.0",
+  "v2.0.0",
+  "v1.0.1",
+  "v1.0.0",
+] as const;
+
+// Minimum recommended version
+export const MINIMUM_VERSION = "v1.0.0";
+
 export const DEFAULT_REPLICATION_FACTOR = 2;
 
 export const DEFAULT_CAPACITY = "10G";

@@ -14,6 +14,8 @@ import {
   DEFAULT_GARAGE_VERSION,
   DEFAULT_REPLICATION_FACTOR,
   DEFAULT_CAPACITY,
+  KNOWN_GOOD_VERSIONS,
+  MINIMUM_VERSION,
 } from "./constants.ts";
 
 export interface NodeConfig {
@@ -487,6 +489,9 @@ export class Wizard {
         default: DEFAULT_GARAGE_VERSION,
       });
 
+      // Validate and warn about version
+      this.validateGarageVersion(garageVersion);
+
       const customPorts = await Confirm.prompt({
         message: "Customize ports?",
         default: false,
@@ -635,6 +640,35 @@ export class Wizard {
     console.log("\n" + bold("Documentation:"));
     console.log("  https://garagehq.deuxfleurs.fr/documentation/");
     console.log("\n");
+  }
+
+  private validateGarageVersion(version: string): void {
+    // Compare versions (simple string comparison works for semver-like versions)
+    const compareVersions = (a: string, b: string): number => {
+      const aParts = a.replace('v', '').split('.').map(Number);
+      const bParts = b.replace('v', '').split('.').map(Number);
+      
+      for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const aPart = aParts[i] || 0;
+        const bPart = bParts[i] || 0;
+        if (aPart > bPart) return 1;
+        if (aPart < bPart) return -1;
+      }
+      return 0;
+    };
+
+    // Check if version is too old
+    if (compareVersions(version, MINIMUM_VERSION) < 0) {
+      console.log(yellow(`\n  ⚠ Warning: Version ${version} is older than the minimum recommended version (${MINIMUM_VERSION}).`));
+      console.log(yellow(`    Consider upgrading to ${DEFAULT_GARAGE_VERSION} for better stability and features.`));
+    }
+
+    // Check if it's a known good version
+    if (!KNOWN_GOOD_VERSIONS.includes(version as any)) {
+      console.log(yellow(`\n  ℹ Note: Version ${version} is not in the list of tested versions.`));
+      console.log(yellow(`    Known stable versions: ${KNOWN_GOOD_VERSIONS.join(', ')}`));
+      console.log(yellow(`    This version may work but hasn't been extensively tested with this installer.`));
+    }
   }
 
   private async closeConnections() {
