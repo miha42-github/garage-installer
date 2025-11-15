@@ -34,15 +34,12 @@ export class SSHConnection {
         port: this.config.port,
         username: this.config.username,
         readyTimeout: this.defaultTimeout,
-        // Use ciphers compatible with Deno's Node.js compatibility layer
-        // Avoid AES-GCM which has padding issues in Deno
+        // Use only ciphers fully supported in Deno's Node.js compatibility layer
         algorithms: {
           cipher: [
             'aes128-ctr',
-            'aes192-ctr',
             'aes256-ctr',
             'aes128-cbc',
-            'aes192-cbc',
             'aes256-cbc',
           ],
         },
