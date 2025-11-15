@@ -168,20 +168,81 @@ export class Wizard {
            ipv6BracketRegex.test(value);
   }
 
+  private async testHostResolution(hostname: string): Promise<boolean> {
+    try {
+      // Try to resolve the hostname
+      const result = await Deno.resolveDns(hostname, "A");
+      return result.length > 0;
+    } catch {
+      // Try AAAA (IPv6) if A record fails
+      try {
+        const result = await Deno.resolveDns(hostname, "AAAA");
+        return result.length > 0;
+      } catch {
+        // If it looks like an IP address, assume it's valid
+        // (might be in /etc/hosts or unreachable but valid)
+        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
+          return true; // Valid IPv4 format
+        }
+        if (/^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(hostname)) {
+          return true; // Valid IPv6 format
+        }
+        return false;
+      }
+    }
+  }
+
   private async collectNodeInfo() {
     // Node 1
     console.log(bold("\nNode 1 Configuration:"));
     
-    const host1 = await Input.prompt({
-      message: "Hostname or IP address (IPv4/IPv6 supported):",
-      validate: (value) => {
-        if (!value) return "Hostname is required";
-        if (!this.isValidHostOrIP(value)) {
-          return "Invalid hostname or IP address";
+    let host1: string = "";
+    let hostValid = false;
+    
+    while (!hostValid) {
+      host1 = await Input.prompt({
+        message: "Hostname or IP address (IPv4/IPv6 supported):",
+        validate: (value) => {
+          if (!value) return "Hostname is required";
+          if (!this.isValidHostOrIP(value)) {
+            return "Invalid hostname or IP address";
+          }
+          return true;
+        },
+      });
+
+      // Test if hostname resolves
+      console.log(dim(`  Checking if ${host1} is reachable...`));
+      const resolves = await this.testHostResolution(host1);
+      
+      if (!resolves) {
+        console.log(yellow(`\n  ⚠ Warning: Cannot resolve hostname "${host1}"`));
+        console.log(yellow(`    This could mean:`));
+        console.log(yellow(`    • Hostname is misspelled`));
+        console.log(yellow(`    • Host is defined in /etc/hosts (might still work)`));
+        console.log(yellow(`    • Host is currently unreachable\n`));
+        
+        const proceed = await Confirm.prompt({
+          message: "Try connecting anyway?",
+          default: false,
+        });
+        
+        if (proceed) {
+          hostValid = true;
+        } else {
+          const retry = await Confirm.prompt({
+            message: "Re-enter hostname?",
+            default: true,
+          });
+          if (!retry) {
+            throw new Error("Hostname validation cancelled");
+          }
         }
-        return true;
-      },
-    });
+      } else {
+        console.log(green(`  ✓ ${host1} is reachable`));
+        hostValid = true;
+      }
+    }
 
     const port1 = await NumberPrompt.prompt({
       message: "SSH port:",
@@ -301,15 +362,52 @@ export class Wizard {
     });
 
     if (sameCredentials) {
-      const host2 = await Input.prompt({
-        message: "Hostname or IP address (IPv4/IPv6 supported):",
-        validate: (value) => {
-          if (!value) return "Hostname is required";
-          if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
-          if (value === host1) return "Node 2 must have different hostname than Node 1";
-          return true;
-        },
-      });
+      let host2: string = "";
+      let hostValid = false;
+      
+      while (!hostValid) {
+        host2 = await Input.prompt({
+          message: "Hostname or IP address (IPv4/IPv6 supported):",
+          validate: (value) => {
+            if (!value) return "Hostname is required";
+            if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
+            if (value === host1) return "Node 2 must have different hostname than Node 1";
+            return true;
+          },
+        });
+
+        // Test if hostname resolves
+        console.log(dim(`  Checking if ${host2} is reachable...`));
+        const resolves = await this.testHostResolution(host2);
+        
+        if (!resolves) {
+          console.log(yellow(`\n  ⚠ Warning: Cannot resolve hostname "${host2}"`));
+          console.log(yellow(`    This could mean:`));
+          console.log(yellow(`    • Hostname is misspelled`));
+          console.log(yellow(`    • Host is defined in /etc/hosts (might still work)`));
+          console.log(yellow(`    • Host is currently unreachable\n`));
+          
+          const proceed = await Confirm.prompt({
+            message: "Try connecting anyway?",
+            default: false,
+          });
+          
+          if (proceed) {
+            hostValid = true;
+          } else {
+            const retry = await Confirm.prompt({
+              message: "Re-enter hostname?",
+              default: true,
+            });
+            if (!retry) {
+              throw new Error("Hostname validation cancelled");
+            }
+          }
+        } else {
+          console.log(green(`  ✓ ${host2} is reachable`));
+          hostValid = true;
+        }
+      }
 
       this.node2 = {
         name: "node2",
@@ -322,15 +420,52 @@ export class Wizard {
       };
     } else {
       // Repeat full config for node 2
-      const host2 = await Input.prompt({
-        message: "Hostname or IP address (IPv4/IPv6 supported):",
-        validate: (value) => {
-          if (!value) return "Hostname is required";
-          if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
-          if (value === host1) return "Node 2 must have different hostname than Node 1";
-          return true;
-        },
-      });
+      let host2: string = "";
+      let hostValid = false;
+      
+      while (!hostValid) {
+        host2 = await Input.prompt({
+          message: "Hostname or IP address (IPv4/IPv6 supported):",
+          validate: (value) => {
+            if (!value) return "Hostname is required";
+            if (!this.isValidHostOrIP(value)) return "Invalid hostname or IP address";
+            if (value === host1) return "Node 2 must have different hostname than Node 1";
+            return true;
+          },
+        });
+
+        // Test if hostname resolves
+        console.log(dim(`  Checking if ${host2} is reachable...`));
+        const resolves = await this.testHostResolution(host2);
+        
+        if (!resolves) {
+          console.log(yellow(`\n  ⚠ Warning: Cannot resolve hostname "${host2}"`));
+          console.log(yellow(`    This could mean:`));
+          console.log(yellow(`    • Hostname is misspelled`));
+          console.log(yellow(`    • Host is defined in /etc/hosts (might still work)`));
+          console.log(yellow(`    • Host is currently unreachable\n`));
+          
+          const proceed = await Confirm.prompt({
+            message: "Try connecting anyway?",
+            default: false,
+          });
+          
+          if (proceed) {
+            hostValid = true;
+          } else {
+            const retry = await Confirm.prompt({
+              message: "Re-enter hostname?",
+              default: true,
+            });
+            if (!retry) {
+              throw new Error("Hostname validation cancelled");
+            }
+          }
+        } else {
+          console.log(green(`  ✓ ${host2} is reachable`));
+          hostValid = true;
+        }
+      }
 
       const port2 = await NumberPrompt.prompt({
         message: "SSH port:",
