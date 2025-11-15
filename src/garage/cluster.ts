@@ -42,7 +42,7 @@ export class GarageCluster {
 
     // Step 3: Create directories
     console.log(dim("  Creating directories..."));
-    const workdir = "/opt/garage";
+    const workdir = this.config.workdir;
     await node.connection!.exec(`sudo mkdir -p ${workdir}`);
     await node.connection!.exec(`sudo mkdir -p ${this.config.dataDir}`);
     await node.connection!.exec(`sudo mkdir -p ${this.config.metaDir}`);
@@ -109,8 +109,8 @@ db_engine = "lmdb"
 replication_factor = ${this.config.replicationFactor}
 compression_level = 2
 
-rpc_bind_addr = "[::]:3901"
-rpc_public_addr = "${node.host}:3901"
+rpc_bind_addr = "[::]:${this.config.ports.rpc}"
+rpc_public_addr = "${node.host}:${this.config.ports.rpc}"
 rpc_secret = "${this.config.rpcSecret}"
 
 # Bootstrap peers for automatic node discovery on restart
@@ -118,16 +118,16 @@ ${peersConfig}
 
 [s3_api]
 s3_region = "garage"
-api_bind_addr = "[::]:3900"
+api_bind_addr = "[::]:${this.config.ports.s3Api}"
 root_domain = ".s3.garage"
 
 [s3_web]
-bind_addr = "[::]:3902"
+bind_addr = "[::]:${this.config.ports.s3Web}"
 root_domain = ".web.garage"
 index = "index.html"
 
 [admin]
-api_bind_addr = "[::]:3903"
+api_bind_addr = "[::]:${this.config.ports.admin}"
 `.trim();
   }
 
@@ -219,11 +219,11 @@ services:
     // Build bootstrap peers list
     // Format: "nodeId@host:port"
     const bootstrapPeers = [
-      `${nodeIds[0]}@${this.nodes[0].host}:3901`,
-      `${nodeIds[1]}@${this.nodes[1].host}:3901`
+      `${nodeIds[0]}@${this.nodes[0].host}:${this.config.ports.rpc}`,
+      `${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`
     ];
 
-    const workdir = "/opt/garage";
+    const workdir = this.config.workdir;
 
     // Update config on each node
     for (let i = 0; i < this.nodes.length; i++) {
@@ -269,7 +269,7 @@ services:
     // Connect node1 to node2
     const docker1 = new DockerManager(this.nodes[0].connection!);
     await docker1.detectSudoRequirement();
-    const connectCmd = `garage node connect ${nodeIds[1]}@${this.nodes[1].host}:3901`;
+    const connectCmd = `garage node connect ${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`;
     
     const result = await docker1.execInContainer("garage", connectCmd);
     

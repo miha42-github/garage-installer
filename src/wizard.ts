@@ -6,6 +6,13 @@ import { DockerManager } from "./docker/manager.ts";
 import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
 import { CleanupManager } from "./cleanup.ts";
+import {
+  DEFAULT_PORTS,
+  DEFAULT_PATHS,
+  DEFAULT_GARAGE_VERSION,
+  DEFAULT_REPLICATION_FACTOR,
+  DEFAULT_CAPACITY,
+} from "./constants.ts";
 
 export interface NodeConfig {
   name: string;
@@ -23,8 +30,15 @@ export interface ClusterConfig {
   capacityPerNode: string;
   dataDir: string;
   metaDir: string;
+  workdir: string;
   garageVersion: string;
   replicationFactor: number;
+  ports: {
+    s3Api: number;
+    rpc: number;
+    s3Web: number;
+    admin: number;
+  };
 }
 
 export class Wizard {
@@ -387,7 +401,7 @@ export class Wizard {
 
     const capacity = await Input.prompt({
       message: "Storage capacity per node (e.g., 10G, 100G, 1T):",
-      default: "10G",
+      default: DEFAULT_CAPACITY,
       validate: (value: string) => {
         if (!/^\d+[KMGT]$/.test(value)) {
           return "Invalid format. Use: 10G, 100G, 1T, etc.";
@@ -423,20 +437,76 @@ export class Wizard {
       },
     });
 
-    const dataDir = await Input.prompt({
-      message: "Data directory path:",
-      default: "/var/lib/garage/data",
+    // Ask if user wants advanced configuration
+    const advancedConfig = await Confirm.prompt({
+      message: "Configure advanced settings (ports, paths)?",
+      default: false,
     });
 
-    const metaDir = await Input.prompt({
-      message: "Metadata directory path:",
-      default: "/var/lib/garage/meta",
-    });
+    let dataDir = DEFAULT_PATHS.dataDir;
+    let metaDir = DEFAULT_PATHS.metaDir;
+    let workdir = DEFAULT_PATHS.workdir;
+    let garageVersion = DEFAULT_GARAGE_VERSION;
+    let ports = { ...DEFAULT_PORTS };
 
-    const garageVersion = await Input.prompt({
-      message: "Garage version:",
-      default: "v2.1.0",
-    });
+    if (advancedConfig) {
+      console.log(cyan("\n--- Advanced Configuration ---\n"));
+      
+      workdir = await Input.prompt({
+        message: "Working directory path:",
+        default: DEFAULT_PATHS.workdir,
+      });
+
+      dataDir = await Input.prompt({
+        message: "Data directory path:",
+        default: DEFAULT_PATHS.dataDir,
+      });
+
+      metaDir = await Input.prompt({
+        message: "Metadata directory path:",
+        default: DEFAULT_PATHS.metaDir,
+      });
+
+      garageVersion = await Input.prompt({
+        message: "Garage version:",
+        default: DEFAULT_GARAGE_VERSION,
+      });
+
+      const customPorts = await Confirm.prompt({
+        message: "Customize ports?",
+        default: false,
+      });
+
+      if (customPorts) {
+        ports.s3Api = await NumberPrompt.prompt({
+          message: "S3 API port:",
+          default: DEFAULT_PORTS.s3Api,
+          min: 1,
+          max: 65535,
+        });
+
+        ports.rpc = await NumberPrompt.prompt({
+          message: "RPC port:",
+          default: DEFAULT_PORTS.rpc,
+          min: 1,
+          max: 65535,
+        });
+
+        ports.s3Web = await NumberPrompt.prompt({
+          message: "S3 Web port:",
+          default: DEFAULT_PORTS.s3Web,
+          min: 1,
+          max: 65535,
+        });
+
+        ports.admin = await NumberPrompt.prompt({
+          message: "Admin API port:",
+          default: DEFAULT_PORTS.admin,
+          min: 1,
+          max: 65535,
+        });
+      }
+    }
 
     // Generate RPC secret
     const rpcSecret = this.generateRPCSecret();
@@ -447,8 +517,10 @@ export class Wizard {
       capacityPerNode: capacity,
       dataDir,
       metaDir,
+      workdir,
       garageVersion,
-      replicationFactor: 2,
+      replicationFactor: DEFAULT_REPLICATION_FACTOR,
+      ports,
     };
 
     console.log(green("\n✓ Cluster configured"));
