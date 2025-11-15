@@ -92,8 +92,8 @@ export class SystemChecker {
         message: "User not in docker group",
         autoFix: async (ssh) => {
           await ssh.exec(`sudo usermod -aG docker ${username}`);
-          // Note: User needs to log out/in for group changes to take effect
-          // We'll use sudo docker for now
+          console.log("  Note: User added to docker group. Using 'sudo docker' for this session.");
+          console.log("  (Full group membership will be active after logout/login)");
         },
       };
     }

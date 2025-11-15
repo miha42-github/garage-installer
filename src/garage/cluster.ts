@@ -24,6 +24,9 @@ export class GarageCluster {
 
   private async deployNode(node: NodeConfig, display: DisplayManager): Promise<void> {
     const docker = new DockerManager(node.connection!);
+    
+    // Detect if we need sudo for docker commands
+    await docker.detectSudoRequirement();
 
     // Step 1: Pull image
     console.log(dim("  Pulling Garage image..."));

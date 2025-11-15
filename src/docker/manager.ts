@@ -1,10 +1,45 @@
 import type { SSHConnection } from "../ssh/connection.ts";
 
 export class DockerManager {
+  private useSudo: boolean = false;
+
   constructor(private ssh: SSHConnection) {}
 
+  /**
+   * Check if we need to use sudo for docker commands
+   */
+  async detectSudoRequirement(): Promise<void> {
+    // Try docker without sudo first
+    const result = await this.ssh.exec("docker ps 2>&1");
+    
+    if (result.code === 0) {
+      this.useSudo = false;
+      return;
+    }
+
+    // If it failed with permission denied, try with sudo
+    if (result.stderr.includes("permission denied") || result.stdout.includes("permission denied")) {
+      const sudoResult = await this.ssh.exec("sudo docker ps 2>&1");
+      if (sudoResult.code === 0) {
+        this.useSudo = true;
+        return;
+      }
+    }
+
+    // If both failed, don't use sudo (will fail with better error message)
+    this.useSudo = false;
+  }
+
+  /**
+   * Execute a docker command, automatically adding sudo if needed
+   */
+  private async dockerExec(command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+    const fullCommand = this.useSudo ? `sudo ${command}` : command;
+    return await this.ssh.exec(fullCommand);
+  }
+
   async pullImage(image: string): Promise<void> {
-    const result = await this.ssh.exec(`docker pull ${image}`);
+    const result = await this.dockerExec(`docker pull ${image}`);
     if (result.code !== 0) {
       throw new Error(`Failed to pull image: ${result.stderr}`);
     }
@@ -12,7 +47,7 @@ export class DockerManager {
 
   async createNetwork(name: string): Promise<void> {
     // Check if network exists
-    const checkResult = await this.ssh.exec(
+    const checkResult = await this.dockerExec(
       `docker network ls | grep ${name} || true`
     );
 
@@ -20,7 +55,7 @@ export class DockerManager {
       return; // Network already exists
     }
 
-    const result = await this.ssh.exec(`docker network create ${name}`);
+    const result = await this.dockerExec(`docker network create ${name}`);
     if (result.code !== 0) {
       throw new Error(`Failed to create network: ${result.stderr}`);
     }
@@ -28,23 +63,23 @@ export class DockerManager {
 
   async stopContainer(name: string): Promise<void> {
     // Silently fail if container doesn't exist
-    await this.ssh.exec(`docker stop ${name} 2>/dev/null || true`);
+    await this.dockerExec(`docker stop ${name} 2>/dev/null || true`);
   }
 
   async removeContainer(name: string): Promise<void> {
     // Silently fail if container doesn't exist
-    await this.ssh.exec(`docker rm ${name} 2>/dev/null || true`);
+    await this.dockerExec(`docker rm ${name} 2>/dev/null || true`);
   }
 
   async containerExists(name: string): Promise<boolean> {
-    const result = await this.ssh.exec(
+    const result = await this.dockerExec(
       `docker ps -a | grep ${name} || echo "not_found"`
     );
     return !result.stdout.includes("not_found");
   }
 
   async containerRunning(name: string): Promise<boolean> {
-    const result = await this.ssh.exec(
+    const result = await this.dockerExec(
       `docker ps | grep ${name} || echo "not_running"`
     );
     return !result.stdout.includes("not_running");
@@ -58,7 +93,7 @@ export class DockerManager {
     await this.ssh.writeFile(`${workdir}/docker-compose.yml`, composeContent);
 
     // Deploy using docker compose
-    const result = await this.ssh.exec(`cd ${workdir} && docker compose up -d`);
+    const result = await this.dockerExec(`cd ${workdir} && docker compose up -d`);
     
     if (result.code !== 0) {
       throw new Error(`Failed to deploy: ${result.stderr}`);
@@ -66,7 +101,7 @@ export class DockerManager {
   }
 
   async getContainerLogs(name: string, lines: number = 50): Promise<string> {
-    const result = await this.ssh.exec(`docker logs --tail ${lines} ${name}`);
+    const result = await this.dockerExec(`docker logs --tail ${lines} ${name}`);
     return result.stdout + result.stderr;
   }
 
@@ -74,7 +109,7 @@ export class DockerManager {
     container: string,
     command: string
   ): Promise<{ stdout: string; stderr: string; code: number }> {
-    return await this.ssh.exec(`docker exec ${container} ${command}`);
+    return await this.dockerExec(`docker exec ${container} ${command}`);
   }
 
   async waitForHealthy(
@@ -101,7 +136,7 @@ export class DockerManager {
   }
 
   async getContainerIP(container: string): Promise<string> {
-    const result = await this.ssh.exec(
+    const result = await this.dockerExec(
       `docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${container}`
     );
     
