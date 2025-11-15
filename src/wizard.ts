@@ -210,15 +210,46 @@ export class Wizard {
     if (authMethod1 === "key") {
       let keyValid = false;
       while (!keyValid) {
-        keyPath1 = await Input.prompt({
-          message: "Path to SSH private key:",
-          default: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-          suggestions: [
-            `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-            `${Deno.env.get("HOME")}/.ssh/id_ed25519`,
-            `${Deno.env.get("HOME")}/.ssh/id_ecdsa`,
-          ],
-        });
+        // Check for common SSH key files
+        const homeDir = Deno.env.get("HOME") || "";
+        const commonKeys = [
+          `${homeDir}/.ssh/id_ed25519`,
+          `${homeDir}/.ssh/id_rsa`,
+          `${homeDir}/.ssh/id_ecdsa`,
+        ];
+        
+        const availableKeys: string[] = [];
+        for (const keyPath of commonKeys) {
+          try {
+            await Deno.stat(keyPath);
+            availableKeys.push(keyPath);
+          } catch {
+            // Key doesn't exist, skip it
+          }
+        }
+
+        // If we found keys, let user choose; otherwise ask for path
+        if (availableKeys.length > 0) {
+          availableKeys.push("Other (specify path)");
+          const keyChoice = await Select.prompt({
+            message: "Select SSH private key:",
+            options: availableKeys,
+          });
+          
+          if (keyChoice === "Other (specify path)") {
+            keyPath1 = await Input.prompt({
+              message: "Path to SSH private key:",
+              default: `${homeDir}/.ssh/id_rsa`,
+            });
+          } else {
+            keyPath1 = keyChoice;
+          }
+        } else {
+          keyPath1 = await Input.prompt({
+            message: "Path to SSH private key:",
+            default: `${homeDir}/.ssh/id_rsa`,
+          });
+        }
 
         // Validate the key file exists and is readable
         try {
@@ -325,10 +356,46 @@ export class Wizard {
       if (authMethod2 === "key") {
         let keyValid = false;
         while (!keyValid) {
-          keyPath2 = await Input.prompt({
-            message: "Path to SSH private key:",
-            default: keyPath1,
-          });
+          // Check for common SSH key files
+          const homeDir = Deno.env.get("HOME") || "";
+          const commonKeys = [
+            `${homeDir}/.ssh/id_ed25519`,
+            `${homeDir}/.ssh/id_rsa`,
+            `${homeDir}/.ssh/id_ecdsa`,
+          ];
+          
+          const availableKeys: string[] = [];
+          for (const keyPath of commonKeys) {
+            try {
+              await Deno.stat(keyPath);
+              availableKeys.push(keyPath);
+            } catch {
+              // Key doesn't exist, skip it
+            }
+          }
+
+          // If we found keys, let user choose; otherwise ask for path
+          if (availableKeys.length > 0) {
+            availableKeys.push("Other (specify path)");
+            const keyChoice = await Select.prompt({
+              message: "Select SSH private key:",
+              options: availableKeys,
+            });
+            
+            if (keyChoice === "Other (specify path)") {
+              keyPath2 = await Input.prompt({
+                message: "Path to SSH private key:",
+                default: keyPath1,
+              });
+            } else {
+              keyPath2 = keyChoice;
+            }
+          } else {
+            keyPath2 = await Input.prompt({
+              message: "Path to SSH private key:",
+              default: keyPath1,
+            });
+          }
 
           // Validate the key file exists and is readable
           try {
