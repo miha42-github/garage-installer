@@ -7,6 +7,7 @@ import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
 import { CleanupManager } from "./cleanup.ts";
 import { withSpinner } from "./ui/spinner.ts";
+import { initLogger, getLogger } from "./logger.ts";
 import {
   DEFAULT_PORTS,
   DEFAULT_PATHS,
@@ -55,6 +56,11 @@ export class Wizard {
   }
 
   async run() {
+    // Initialize logging
+    const logger = initLogger();
+    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
+    await logger.info("=== Garage Installer Started ===");
+
     console.log(bold("This wizard will guide you through installing a 2-node Garage cluster.\n"));
     console.log("You'll need:");
     console.log("  • Two Ubuntu/Debian servers with SSH access");
@@ -69,44 +75,54 @@ export class Wizard {
 
     if (!proceed) {
       console.log(yellow("Installation cancelled."));
+      await logger.info("Installation cancelled by user");
       return;
     }
 
     try {
       // Phase 1: Node Discovery
       console.log(bold(cyan("\n=== Phase 1: Node Configuration ===")));
+      await logger.info("Phase 1: Node Configuration started");
       await this.collectNodeInfo();
 
       // Phase 2: SSH Connectivity
       console.log(bold(cyan("\n=== Phase 2: Testing Connectivity ===")));
+      await logger.info("Phase 2: Testing Connectivity started");
       await this.testConnectivity();
 
       // Phase 3: Preflight Checks
       console.log(bold(cyan("\n=== Phase 3: System Checks ===")));
+      await logger.info("Phase 3: System Checks started");
       await this.runPreflightChecks();
 
       // Phase 4: Cluster Configuration
       console.log(bold(cyan("\n=== Phase 4: Cluster Configuration ===")));
+      await logger.info("Phase 4: Cluster Configuration started");
       await this.configureCluster();
 
       // Phase 5: Deployment Summary
       console.log(bold(cyan("\n=== Phase 5: Deployment Summary ===")));
+      await logger.info("Phase 5: Deployment Summary");
       await this.showSummary();
 
       // Phase 6: Deploy
       console.log(bold(cyan("\n=== Phase 6: Deploying Garage ===")));
+      await logger.info("Phase 6: Deploying Garage started");
       await this.deployCluster();
 
       // Phase 7: Post-Install
       console.log(bold(cyan("\n=== Phase 7: Finalizing ===")));
+      await logger.info("Phase 7: Finalizing started");
       await this.postInstall();
 
       console.log(green(bold("\n✓ Installation complete!")));
+      await logger.info("Installation completed successfully");
       this.showSuccessMessage();
 
     } catch (error: any) {
+      await logger.error("Installation failed", { error: error.message, stack: error.stack });
       console.error(red(bold("\n✖ Installation failed:")), error.message);
-      console.error(dim("\nFor troubleshooting, check the logs above."));
+      console.error(dim(`\nFor troubleshooting, check the log file: ${logger.getLogPath()}`));
       
       // Offer to cleanup if anything was deployed
       if (this.cleanupManager.hasDeploymentState()) {

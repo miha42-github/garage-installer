@@ -1,5 +1,6 @@
 import { Client } from "ssh2";
 import type { NodeConfig } from "../wizard.ts";
+import { getLogger } from "../logger.ts";
 
 export interface ExecResult {
   stdout: string;
@@ -12,6 +13,7 @@ export class SSHConnection {
   private config: NodeConfig;
   private connected: boolean = false;
   private defaultTimeout: number = 30000; // 30 seconds
+  private logger = getLogger();
 
   constructor(config: NodeConfig) {
     this.config = config;
@@ -102,7 +104,10 @@ export class SSHConnection {
         stream.on("close", (code: number) => {
           clearTimeout(timeoutHandle);
           if (!timedOut) {
-            resolve({ stdout, stderr, code });
+            const result = { stdout, stderr, code };
+            // Log the command execution
+            this.logger.command(`[${this.config.name}] ${command}`, result).catch(() => {});
+            resolve(result);
           }
         });
 
