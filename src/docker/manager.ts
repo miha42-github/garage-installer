@@ -17,9 +17,9 @@ export class DockerManager {
       return;
     }
 
-    // If it failed with permission denied, try with sudo
+    // If it failed with permission denied, try with sudo -n (passwordless)
     if (result.stderr.includes("permission denied") || result.stdout.includes("permission denied")) {
-      const sudoResult = await this.ssh.exec("sudo docker ps 2>&1");
+      const sudoResult = await this.ssh.exec("sudo -n docker ps 2>&1");
       if (sudoResult.code === 0) {
         this.useSudo = true;
         return;
@@ -34,7 +34,7 @@ export class DockerManager {
    * Execute a docker command, automatically adding sudo if needed
    */
   private async dockerExec(command: string): Promise<{ stdout: string; stderr: string; code: number }> {
-    const fullCommand = this.useSudo ? `sudo ${command}` : command;
+    const fullCommand = this.useSudo ? `sudo -n ${command}` : command;
     return await this.ssh.exec(fullCommand);
   }
 

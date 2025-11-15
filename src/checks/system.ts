@@ -86,15 +86,32 @@ export class SystemChecker {
       const whoamiResult = await this.ssh.exec("whoami");
       const username = whoamiResult.stdout.trim();
 
+      // Check if sudo docker works (passwordless sudo)
+      const sudoCheck = await this.ssh.exec("sudo -n docker ps 2>&1");
+      
+      if (sudoCheck.code === 0) {
+        console.log("  Note: User not in docker group, but sudo works. Will use 'sudo docker' for this session.");
+        return {
+          name: "Docker Permissions",
+          passed: true,
+          message: "Docker accessible via sudo (user not in docker group)",
+        };
+      }
+
+      // Neither direct docker nor sudo docker work
+      console.log("\n  ⚠️  Docker permission issue detected.");
+      console.log("  The user is not in the docker group and sudo is not configured for passwordless access.");
+      console.log("  Please run this command on the node manually:");
+      console.log("");
+      console.log(`    sudo usermod -aG docker ${username}`);
+      console.log("");
+      console.log("  Then log out and log back in, or run: newgrp docker");
+      console.log("");
+      
       return {
         name: "Docker Permissions",
         passed: false,
-        message: "User not in docker group",
-        autoFix: async (ssh) => {
-          await ssh.exec(`sudo usermod -aG docker ${username}`);
-          console.log("  Note: User added to docker group. Using 'sudo docker' for this session.");
-          console.log("  (Full group membership will be active after logout/login)");
-        },
+        message: "User not in docker group and sudo requires password. Manual intervention required.",
       };
     }
 
@@ -203,17 +220,33 @@ export class SystemChecker {
       passed: false,
       message: "Docker Compose not installed",
       autoFix: async (ssh) => {
+        // Check if passwordless sudo is available
+        const sudoCheck = await ssh.exec("sudo -n true 2>&1");
+        
+        if (sudoCheck.code !== 0) {
+          console.log("\n  ⚠️  Docker Compose installation requires sudo access.");
+          console.log("  Please run these commands on the node manually:");
+          console.log("");
+          const arch = await ssh.exec("uname -m");
+          const archStr = arch.stdout.trim();
+          console.log("    sudo mkdir -p /usr/local/lib/docker/cli-plugins");
+          console.log(`    sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} -o /usr/local/lib/docker/cli-plugins/docker-compose`);
+          console.log("    sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
+          console.log("");
+          throw new Error("Docker Compose installation requires manual intervention (passwordless sudo not available)");
+        }
+        
         // Docker Compose v2 is now included with Docker Desktop
         // For servers, it's installed as a plugin
         const arch = await ssh.exec("uname -m");
         const archStr = arch.stdout.trim();
         
-        await ssh.exec("sudo mkdir -p /usr/local/lib/docker/cli-plugins");
+        await ssh.exec("sudo -n mkdir -p /usr/local/lib/docker/cli-plugins");
         await ssh.exec(
-          `sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} ` +
+          `sudo -n curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} ` +
           `-o /usr/local/lib/docker/cli-plugins/docker-compose`
         );
-        await ssh.exec("sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
+        await ssh.exec("sudo -n chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
       },
     };
   }
