@@ -133,9 +133,27 @@ export class SystemChecker {
     const busyPorts: number[] = [];
 
     for (const port of portsToCheck) {
-      const result = await this.ssh.exec(
-        `sudo ss -tlnp | grep ":${port} " || true`
+      // Try without sudo first (ss or netstat)
+      let result = await this.ssh.exec(
+        `ss -tlnp 2>/dev/null | grep ":${port} " || netstat -tlnp 2>/dev/null | grep ":${port} " || echo ""`
       );
+      
+      // If command not found or no output, try with sudo
+      if (result.code !== 0 || (result.stdout.trim().length === 0 && result.stderr.includes("not found"))) {
+        // Check if sudo is available and doesn't require password
+        const sudoCheck = await this.ssh.exec("sudo -n true 2>&1");
+        
+        if (sudoCheck.code === 0) {
+          // sudo available without password
+          result = await this.ssh.exec(
+            `sudo ss -tlnp 2>/dev/null | grep ":${port} " || sudo netstat -tlnp 2>/dev/null | grep ":${port} " || true`
+          );
+        } else {
+          // Can't check ports reliably without sudo, assume they're free
+          console.log(`  Note: Cannot check port ${port} without sudo. Proceeding with assumption it's available.`);
+          continue;
+        }
+      }
       
       if (result.stdout.trim().length > 0) {
         busyPorts.push(port);
