@@ -170,6 +170,7 @@ docker compose up -d
 - Verify SSH credentials
 - Check firewall rules (port 22)
 - Ensure SSH key permissions are 600
+- **"setAutoPadding not supported" error**: The installer automatically uses compatible ciphers. If you still see this, your SSH server may need cipher configuration updates.
 
 ### Docker installation fails
 - Check internet connectivity on nodes
