@@ -267,6 +267,33 @@ Contributions welcome! Please:
 4. Add tests if applicable
 5. Submit a pull request
 
+## Platform Notes
+
+### Windows
+The installer runs on Windows 10/11 with the following considerations:
+
+**Requirements:**
+- PowerShell or Windows Terminal recommended
+- SSH client (OpenSSH is included in Windows 10 1809+)
+- SSH keys should be in Windows format (`C:\Users\YourName\.ssh\id_rsa`)
+
+**Known Compatibility:**
+- ✅ SSH connections work natively
+- ✅ Compiled binary runs without WSL
+- ✅ IPv4 and IPv6 support
+- ⚠️ Path separators are handled automatically by Deno
+- ⚠️ ANSI colors may not display in older terminals (use Windows Terminal)
+
+**Running on Windows:**
+```powershell
+.\garage-installer-windows-x64.exe
+```
+
+Default SSH key path will be `%USERPROFILE%\.ssh\id_rsa`.
+
+### Linux & macOS
+Full native support. Default SSH key path: `~/.ssh/id_rsa`.
+
 ## License
 
 MIT License - see LICENSE file

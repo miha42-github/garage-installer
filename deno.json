@@ -4,7 +4,8 @@
     "compile": "deno compile --allow-all --output=garage-installer mod.ts",
     "compile-linux": "deno compile --allow-all --target x86_64-unknown-linux-gnu --output=dist/garage-installer-linux-x64 mod.ts",
     "compile-macos": "deno compile --allow-all --target x86_64-apple-darwin --output=dist/garage-installer-macos-x64 mod.ts",
-    "build-all": "deno task compile-linux && deno task compile-macos"
+    "compile-windows": "deno compile --allow-all --target x86_64-pc-windows-msvc --output=dist/garage-installer-windows-x64 mod.ts",
+    "build-all": "deno task compile-linux && deno task compile-macos && deno task compile-windows"
   },
   "imports": {
     "@cliffy/prompt": "https://deno.land/x/cliffy@v1.0.0-rc.4/prompt/mod.ts",
