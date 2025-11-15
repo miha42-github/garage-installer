@@ -320,14 +320,66 @@ export class Wizard {
   }
 
   private async testInterNodeConnectivity(): Promise<boolean> {
-    try {
-      const result = await this.node1!.connection!.exec(
-        `ping -c 1 -W 2 ${this.node2!.host}`
-      );
-      return result.code === 0;
-    } catch {
-      return false;
+    // Test RPC port (3901) connectivity in both directions
+    const ports = [3901]; // Main RPC port that needs to be accessible
+    
+    console.log("  Testing node1 -> node2...");
+    for (const port of ports) {
+      try {
+        // Try netcat first (most common)
+        let result = await this.node1!.connection!.exec(
+          `timeout 5 nc -zv ${this.node2!.host} ${port} 2>&1 || echo "FAILED"`,
+          10000 // 10 second timeout
+        );
+        
+        // If nc not available, try bash TCP test
+        if (result.stdout.includes("not found") || result.stdout.includes("FAILED")) {
+          result = await this.node1!.connection!.exec(
+            `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/${this.node2!.host}/${port}' 2>&1 && echo "SUCCESS" || echo "FAILED"`,
+            10000
+          );
+        }
+        
+        if (result.stdout.includes("FAILED") || result.code !== 0) {
+          console.log(red(`  ✖ Cannot reach ${this.node2!.host}:${port} from node1`));
+          return false;
+        }
+      } catch (error: any) {
+        console.log(red(`  ✖ Error testing connectivity: ${error.message}`));
+        return false;
+      }
     }
+    console.log(green("  ✓ node1 can reach node2"));
+
+    console.log("  Testing node2 -> node1...");
+    for (const port of ports) {
+      try {
+        // Try netcat first
+        let result = await this.node2!.connection!.exec(
+          `timeout 5 nc -zv ${this.node1!.host} ${port} 2>&1 || echo "FAILED"`,
+          10000
+        );
+        
+        // If nc not available, try bash TCP test
+        if (result.stdout.includes("not found") || result.stdout.includes("FAILED")) {
+          result = await this.node2!.connection!.exec(
+            `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/${this.node1!.host}/${port}' 2>&1 && echo "SUCCESS" || echo "FAILED"`,
+            10000
+          );
+        }
+        
+        if (result.stdout.includes("FAILED") || result.code !== 0) {
+          console.log(red(`  ✖ Cannot reach ${this.node1!.host}:${port} from node2`));
+          return false;
+        }
+      } catch (error: any) {
+        console.log(red(`  ✖ Error testing connectivity: ${error.message}`));
+        return false;
+      }
+    }
+    console.log(green("  ✓ node2 can reach node1"));
+
+    return true;
   }
 
   private async configureCluster() {
