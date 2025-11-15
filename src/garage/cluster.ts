@@ -3,6 +3,7 @@ import { DockerManager } from "../docker/manager.ts";
 import type { DisplayManager } from "../ui/display.ts";
 import type { CleanupManager } from "../cleanup.ts";
 import { green, yellow, dim } from "@std/fmt/colors";
+import { withSpinner } from "../ui/spinner.ts";
 
 export class GarageCluster {
   private nodes: NodeConfig[];
@@ -19,9 +20,12 @@ export class GarageCluster {
     console.log("\nDeploying Garage to nodes...\n");
 
     for (const node of this.nodes) {
-      console.log(`Deploying to ${node.name}...`);
-      await this.deployNode(node, display);
-      console.log(green(`✓ ${node.name} deployed`));
+      await withSpinner(
+        `Deploying to ${node.name}`,
+        async () => {
+          await this.deployNode(node, display);
+        }
+      );
     }
   }
 
@@ -32,16 +36,13 @@ export class GarageCluster {
     await docker.detectSudoRequirement();
 
     // Step 1: Pull image
-    console.log(dim("  Pulling Garage image..."));
     await docker.pullImage(`dxflrs/garage:${this.config.garageVersion}`);
 
     // Step 2: Stop existing container if any
-    console.log(dim("  Cleaning up existing installation..."));
     await docker.stopContainer("garage");
     await docker.removeContainer("garage");
 
     // Step 3: Create directories
-    console.log(dim("  Creating directories..."));
     const workdir = this.config.workdir;
     await node.connection!.exec(`sudo mkdir -p ${workdir}`);
     await node.connection!.exec(`sudo mkdir -p ${this.config.dataDir}`);
@@ -64,7 +65,6 @@ export class GarageCluster {
     await node.connection!.exec(`sudo chown -R ${uid}:${gid} ${workdir}`);
 
     // Step 4: Generate config
-    console.log(dim("  Generating configuration..."));
     const garageConfig = this.generateGarageConfig(node);
     await node.connection!.exec(`sudo mkdir -p ${workdir}`);
     await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
@@ -76,7 +76,6 @@ export class GarageCluster {
     }
 
     // Step 5: Generate docker-compose
-    console.log(dim("  Generating docker-compose.yml..."));
     const composeContent = this.generateDockerCompose(node, uid, gid);
     await docker.deployWithCompose(composeContent, workdir);
     
@@ -86,7 +85,6 @@ export class GarageCluster {
     }
 
     // Step 6: Wait for container to be healthy
-    console.log(dim("  Waiting for container to start..."));
     const healthy = await docker.waitForHealthy("garage", 30);
     
     if (!healthy) {
@@ -156,38 +154,39 @@ services:
     console.log("\nConfiguring cluster...\n");
 
     // Get node IDs
-    console.log("Retrieving node IDs...");
-    const nodeIds = await this.getNodeIds();
+    const nodeIds = await withSpinner("Retrieving node IDs", async () => {
+      return await this.getNodeIds();
+    });
     console.log(dim(`  Node 1 ID: ${nodeIds[0].substring(0, 16)}...`));
     console.log(dim(`  Node 2 ID: ${nodeIds[1].substring(0, 16)}...`));
 
     // Update configs with bootstrap peers now that we have node IDs
-    console.log("\nUpdating bootstrap peers...");
-    await this.updateBootstrapPeers(nodeIds);
-    console.log(green("✓ Bootstrap peers configured"));
+    await withSpinner("Updating bootstrap peers", async () => {
+      await this.updateBootstrapPeers(nodeIds);
+    });
 
     // Connect nodes
-    console.log("\nConnecting nodes...");
-    await this.connectNodes(nodeIds);
-    console.log(green("✓ Nodes connected"));
-
-    // Wait a bit for nodes to sync
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await withSpinner("Connecting nodes", async () => {
+      await this.connectNodes(nodeIds);
+      // Wait a bit for nodes to sync
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    });
 
     // Configure layout
-    console.log("\nConfiguring cluster layout...");
-    await this.configureLayout(nodeIds);
-    console.log(green("✓ Layout configured"));
+    await withSpinner("Configuring cluster layout", async () => {
+      await this.configureLayout(nodeIds);
+    });
 
     // Wait for layout to apply
-    console.log("\nWaiting for layout to apply...");
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await withSpinner("Applying cluster layout", async () => {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    });
 
     // Verify cluster
-    console.log("\nVerifying cluster health...");
-    const status = await this.getClusterStatus();
-    console.log(green("✓ Cluster is healthy"));
-    console.log(dim(`\n${status}`));
+    await withSpinner("Verifying cluster health", async () => {
+      const status = await this.getClusterStatus();
+      console.log(dim(`\n${status}`));
+    });
   }
 
   private async getNodeIds(): Promise<string[]> {

@@ -6,6 +6,7 @@ import { DockerManager } from "./docker/manager.ts";
 import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
 import { CleanupManager } from "./cleanup.ts";
+import { withSpinner } from "./ui/spinner.ts";
 import {
   DEFAULT_PORTS,
   DEFAULT_PATHS,
@@ -274,17 +275,15 @@ export class Wizard {
     const nodes = [this.node1!, this.node2!];
 
     for (const node of nodes) {
-      console.log(`\nTesting connection to ${bold(node.name)} (${node.host})...`);
-      
-      try {
-        const ssh = new SSHConnection(node);
-        await ssh.connect();
-        await ssh.test();
-        node.connection = ssh;
-        console.log(green(`✓ Connected to ${node.name}`));
-      } catch (error) {
-        throw new Error(`Failed to connect to ${node.name}: ${error.message}`);
-      }
+      await withSpinner(
+        `Connecting to ${node.name} (${node.host})`,
+        async () => {
+          const ssh = new SSHConnection(node);
+          await ssh.connect();
+          await ssh.test();
+          node.connection = ssh;
+        }
+      );
     }
 
     console.log(green("\n✓ All nodes reachable"));
