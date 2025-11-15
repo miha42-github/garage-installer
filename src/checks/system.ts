@@ -86,6 +86,10 @@ export class SystemChecker {
       const whoamiResult = await this.ssh.exec("whoami");
       const username = whoamiResult.stdout.trim();
 
+      // Check if user is already in docker group but needs to activate it
+      const groupCheck = await this.ssh.exec(`groups ${username} | grep docker || echo ""`);
+      const inDockerGroup = groupCheck.stdout.includes("docker");
+
       // Check if sudo docker works (passwordless sudo)
       const sudoCheck = await this.ssh.exec("sudo -n docker ps 2>&1");
       
@@ -98,20 +102,17 @@ export class SystemChecker {
         };
       }
 
-      // Neither direct docker nor sudo docker work
-      console.log("\n  ⚠️  Docker permission issue detected.");
-      console.log("  The user is not in the docker group and sudo is not configured for passwordless access.");
-      console.log("  Please run this command on the node manually:");
-      console.log("");
-      console.log(`    sudo usermod -aG docker ${username}`);
-      console.log("");
-      console.log("  Then log out and log back in, or run: newgrp docker");
-      console.log("");
-      
+      // Neither direct docker nor sudo docker work - return info for manual intervention
       return {
         name: "Docker Permissions",
         passed: false,
-        message: "User not in docker group and sudo requires password. Manual intervention required.",
+        message: inDockerGroup 
+          ? "User is in docker group but needs to activate it (newgrp docker or re-login)"
+          : "User not in docker group and sudo requires password",
+        autoFix: async () => {
+          // This will be handled by the wizard with proper prompts
+          throw new Error("MANUAL_INTERVENTION_REQUIRED");
+        },
       };
     }
 
@@ -224,16 +225,8 @@ export class SystemChecker {
         const sudoCheck = await ssh.exec("sudo -n true 2>&1");
         
         if (sudoCheck.code !== 0) {
-          console.log("\n  ⚠️  Docker Compose installation requires sudo access.");
-          console.log("  Please run these commands on the node manually:");
-          console.log("");
-          const arch = await ssh.exec("uname -m");
-          const archStr = arch.stdout.trim();
-          console.log("    sudo mkdir -p /usr/local/lib/docker/cli-plugins");
-          console.log(`    sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} -o /usr/local/lib/docker/cli-plugins/docker-compose`);
-          console.log("    sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
-          console.log("");
-          throw new Error("Docker Compose installation requires manual intervention (passwordless sudo not available)");
+          // Return error to be handled by wizard with proper prompts
+          throw new Error("MANUAL_INTERVENTION_REQUIRED");
         }
         
         // Docker Compose v2 is now included with Docker Desktop

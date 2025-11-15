@@ -597,6 +597,7 @@ export class Wizard {
 
   private async runPreflightChecks() {
     const nodes = [this.node1!, this.node2!];
+    const manualInterventionNeeded: Array<{node: NodeConfig, failures: any[]}> = [];
 
     for (const node of nodes) {
       console.log(`\nChecking ${bold(node.name)}...`);
@@ -613,14 +614,52 @@ export class Wizard {
       if (failures.length > 0) {
         console.log(yellow("\n⚠ Some checks failed. Attempting auto-fix..."));
         
+        let needsManualIntervention = false;
+        const manualFailures = [];
+        
         for (const failure of failures) {
           if (failure.autoFix) {
-            console.log(`  Fixing: ${failure.name}...`);
-            await failure.autoFix(node.connection!);
-            console.log(green(`  ✓ Fixed: ${failure.name}`));
+            try {
+              console.log(`  Fixing: ${failure.name}...`);
+              await failure.autoFix(node.connection!);
+              console.log(green(`  ✓ Fixed: ${failure.name}`));
+            } catch (error: any) {
+              if (error.message === "MANUAL_INTERVENTION_REQUIRED") {
+                needsManualIntervention = true;
+                manualFailures.push(failure);
+              } else {
+                throw error;
+              }
+            }
           } else {
             throw new Error(`Check failed: ${failure.name} - ${failure.message}`);
           }
+        }
+        
+        if (needsManualIntervention) {
+          manualInterventionNeeded.push({node, failures: manualFailures});
+        }
+      }
+    }
+
+    // If any nodes need manual intervention, pause and provide instructions
+    if (manualInterventionNeeded.length > 0) {
+      await this.handleManualIntervention(manualInterventionNeeded);
+      
+      // Re-run checks after manual intervention
+      console.log(yellow("\n🔄 Re-running checks after manual intervention..."));
+      
+      for (const {node} of manualInterventionNeeded) {
+        console.log(`\nRe-checking ${bold(node.name)}...`);
+        const checker = new SystemChecker(node.connection!);
+        const results = await checker.runAll();
+        this.display.showCheckResults(results);
+        
+        const stillFailing = results.filter(r => !r.passed);
+        if (stillFailing.length > 0) {
+          console.log(red("\n✖ Some checks still failing:"));
+          stillFailing.forEach(f => console.log(`  - ${f.name}: ${f.message}`));
+          throw new Error("Manual intervention did not resolve all issues. Please check the commands were run correctly.");
         }
       }
     }
@@ -636,6 +675,95 @@ export class Wizard {
     }
 
     console.log(green("\n✓ All preflight checks passed"));
+  }
+
+  private async handleManualIntervention(interventions: Array<{node: NodeConfig, failures: any[]}>) {
+    console.log(yellow("\n" + "=".repeat(70)));
+    console.log(yellow("⚠️  MANUAL INTERVENTION REQUIRED"));
+    console.log(yellow("=".repeat(70)));
+    console.log("\nSome checks require manual commands to be run on the target nodes.");
+    console.log("This typically happens when:");
+    console.log("  • Docker Compose is not installed and sudo requires a password");
+    console.log("  • User is not in the docker group and needs to be added");
+    console.log("");
+    
+    for (const {node, failures} of interventions) {
+      console.log(cyan(`\n📍 Node: ${bold(node.name)} (${node.host})`));
+      console.log(dim("─".repeat(70)));
+      
+      for (const failure of failures) {
+        console.log(`\n${yellow("Issue:")} ${failure.name}`);
+        console.log(`${yellow("Details:")} ${failure.message}`);
+        console.log("");
+        
+        // Provide specific instructions based on the failure
+        if (failure.name === "Docker Compose") {
+          const archResult = await node.connection!.exec("uname -m");
+          const arch = archResult.stdout.trim();
+          
+          console.log(green("Commands to run:"));
+          console.log("");
+          console.log(`  ${dim("# SSH to the node:")}`);
+          console.log(`  ssh ${node.username}@${node.host}`);
+          console.log("");
+          console.log(`  ${dim("# Install Docker Compose plugin:")}`);
+          console.log("  sudo mkdir -p /usr/local/lib/docker/cli-plugins");
+          console.log(`  sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch} -o /usr/local/lib/docker/cli-plugins/docker-compose`);
+          console.log("  sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
+          console.log("");
+          console.log(`  ${dim("# Verify installation:")}`);
+          console.log("  docker compose version");
+          console.log("");
+          console.log(`  ${dim("# Exit back to installer:")}`);
+          console.log("  exit");
+        }
+        
+        if (failure.name === "Docker Permissions") {
+          const whoamiResult = await node.connection!.exec("whoami");
+          const username = whoamiResult.stdout.trim();
+          
+          // Check if already in group but not active
+          const groupCheck = await node.connection!.exec(`groups ${username} | grep docker || echo ""`);
+          const inDockerGroup = groupCheck.stdout.includes("docker");
+          
+          console.log(green("Commands to run:"));
+          console.log("");
+          console.log(`  ${dim("# SSH to the node:")}`);
+          console.log(`  ssh ${node.username}@${node.host}`);
+          console.log("");
+          
+          if (inDockerGroup) {
+            console.log(`  ${dim("# Activate docker group (already a member):")}`);
+            console.log("  newgrp docker");
+            console.log("");
+            console.log(`  ${dim("# Or alternatively, logout and login again")}`);
+          } else {
+            console.log(`  ${dim("# Add user to docker group:")}`);
+            console.log(`  sudo usermod -aG docker ${username}`);
+            console.log("");
+            console.log(`  ${dim("# Activate the new group membership:")}`);
+            console.log("  newgrp docker");
+            console.log("");
+            console.log(`  ${dim("# Or alternatively, logout and login again")}`);
+          }
+          console.log("");
+          console.log(`  ${dim("# Verify docker access:")}`);
+          console.log("  docker ps");
+          console.log("");
+          console.log(`  ${dim("# Exit back to installer:")}`);
+          console.log("  exit");
+        }
+      }
+    }
+    
+    console.log("\n" + yellow("─".repeat(70)));
+    console.log("\n" + bold("Please open a new terminal and run the commands above."));
+    console.log("Once complete, return here and press Enter to continue.\n");
+    
+    await Confirm.prompt({
+      message: "Have you completed the manual steps?",
+      default: true,
+    });
   }
 
   private async testInterNodeConnectivity(): Promise<boolean> {
