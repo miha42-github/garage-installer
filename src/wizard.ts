@@ -208,10 +208,42 @@ export class Wizard {
     let password1: string | undefined;
 
     if (authMethod1 === "key") {
-      keyPath1 = await Input.prompt({
-        message: "Path to SSH private key:",
-        default: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-      });
+      let keyValid = false;
+      while (!keyValid) {
+        keyPath1 = await Input.prompt({
+          message: "Path to SSH private key:",
+          default: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
+          suggestions: [
+            `${Deno.env.get("HOME")}/.ssh/id_rsa`,
+            `${Deno.env.get("HOME")}/.ssh/id_ed25519`,
+            `${Deno.env.get("HOME")}/.ssh/id_ecdsa`,
+          ],
+        });
+
+        // Validate the key file exists and is readable
+        try {
+          const keyData = await Deno.readTextFile(keyPath1);
+          if (!keyData.includes("PRIVATE KEY")) {
+            console.log(red(`\n  ✗ Invalid key file: ${keyPath1} doesn't appear to be a private key`));
+            const retry = await Confirm.prompt({
+              message: "Try a different key path?",
+              default: true,
+            });
+            if (!retry) throw new Error("SSH key validation failed");
+            continue;
+          }
+          keyValid = true;
+        } catch (error: any) {
+          if (error.message === "SSH key validation failed") throw error;
+          console.log(red(`\n  ✗ Cannot read key file: ${keyPath1}`));
+          console.log(yellow(`    Error: ${error.message}`));
+          const retry = await Confirm.prompt({
+            message: "Try a different key path?",
+            default: true,
+          });
+          if (!retry) throw new Error("SSH key validation failed");
+        }
+      }
     } else {
       password1 = await Input.prompt({
         message: "SSH password:",
@@ -291,10 +323,37 @@ export class Wizard {
       let password2: string | undefined;
 
       if (authMethod2 === "key") {
-        keyPath2 = await Input.prompt({
-          message: "Path to SSH private key:",
-          default: keyPath1,
-        });
+        let keyValid = false;
+        while (!keyValid) {
+          keyPath2 = await Input.prompt({
+            message: "Path to SSH private key:",
+            default: keyPath1,
+          });
+
+          // Validate the key file exists and is readable
+          try {
+            const keyData = await Deno.readTextFile(keyPath2);
+            if (!keyData.includes("PRIVATE KEY")) {
+              console.log(red(`\n  ✗ Invalid key file: ${keyPath2} doesn't appear to be a private key`));
+              const retry = await Confirm.prompt({
+                message: "Try a different key path?",
+                default: true,
+              });
+              if (!retry) throw new Error("SSH key validation failed");
+              continue;
+            }
+            keyValid = true;
+          } catch (error: any) {
+            if (error.message === "SSH key validation failed") throw error;
+            console.log(red(`\n  ✗ Cannot read key file: ${keyPath2}`));
+            console.log(yellow(`    Error: ${error.message}`));
+            const retry = await Confirm.prompt({
+              message: "Try a different key path?",
+              default: true,
+            });
+            if (!retry) throw new Error("SSH key validation failed");
+          }
+        }
       } else {
         password2 = await Input.prompt({
           message: "SSH password:",
