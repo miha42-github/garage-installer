@@ -388,10 +388,37 @@ export class Wizard {
     const capacity = await Input.prompt({
       message: "Storage capacity per node (e.g., 10G, 100G, 1T):",
       default: "10G",
-      validate: (value) => {
+      validate: (value: string) => {
         if (!/^\d+[KMGT]$/.test(value)) {
           return "Invalid format. Use: 10G, 100G, 1T, etc.";
         }
+        
+        // Parse and validate reasonable bounds
+        const match = value.match(/^(\d+)([KMGT])$/);
+        if (match) {
+          const amount = parseInt(match[1]);
+          const unit = match[2];
+          
+          // Convert to GB for comparison
+          let capacityGB = amount;
+          if (unit === 'K') capacityGB = amount / (1024 * 1024);
+          else if (unit === 'M') capacityGB = amount / 1024;
+          else if (unit === 'T') capacityGB = amount * 1024;
+          
+          // Check bounds
+          if (capacityGB < 1) {
+            return "Capacity too small. Minimum 1GB recommended.";
+          }
+          if (capacityGB > 100000) { // 100TB
+            return "Capacity seems unusually large. Please verify.";
+          }
+          
+          // Warn if very small
+          if (capacityGB < 5) {
+            console.log(yellow("\n  ⚠ Warning: Small capacity may limit cluster functionality."));
+          }
+        }
+        
         return true;
       },
     });
