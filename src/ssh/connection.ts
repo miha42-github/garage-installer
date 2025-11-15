@@ -92,6 +92,9 @@ export class SSHConnection {
       throw new Error("Not connected");
     }
 
+    // Read file asynchronously
+    const fileData = await Deno.readFile(localPath);
+
     return new Promise((resolve, reject) => {
       this.client.sftp((err, sftp) => {
         if (err) {
@@ -99,7 +102,6 @@ export class SSHConnection {
           return;
         }
 
-        const readStream = Deno.readFileSync(localPath);
         const writeStream = sftp.createWriteStream(remotePath);
 
         writeStream.on("close", () => {
@@ -110,7 +112,8 @@ export class SSHConnection {
           reject(new Error(`Upload failed: ${error.message}`));
         });
 
-        writeStream.write(readStream);
+        // Write the file data buffer and close the stream
+        writeStream.write(fileData);
         writeStream.end();
       });
     });
