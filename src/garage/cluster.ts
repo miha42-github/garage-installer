@@ -1,15 +1,18 @@
 import type { NodeConfig, ClusterConfig } from "../wizard.ts";
 import { DockerManager } from "../docker/manager.ts";
 import type { DisplayManager } from "../ui/display.ts";
+import type { CleanupManager } from "../cleanup.ts";
 import { green, yellow, dim } from "@std/fmt/colors";
 
 export class GarageCluster {
   private nodes: NodeConfig[];
   private config: ClusterConfig;
+  private cleanupManager?: CleanupManager;
 
-  constructor(nodes: NodeConfig[], config: ClusterConfig) {
+  constructor(nodes: NodeConfig[], config: ClusterConfig, cleanupManager?: CleanupManager) {
     this.nodes = nodes;
     this.config = config;
+    this.cleanupManager = cleanupManager;
   }
 
   async deploy(display: DisplayManager): Promise<void> {
@@ -43,6 +46,11 @@ export class GarageCluster {
     await node.connection!.exec(`sudo mkdir -p ${workdir}`);
     await node.connection!.exec(`sudo mkdir -p ${this.config.dataDir}`);
     await node.connection!.exec(`sudo mkdir -p ${this.config.metaDir}`);
+    
+    // Track directory creation for cleanup
+    if (this.cleanupManager) {
+      this.cleanupManager.markDirectoriesCreated(node.name);
+    }
 
     // Get user ID for non-root execution
     const uidResult = await node.connection!.exec("id -u");
@@ -61,11 +69,21 @@ export class GarageCluster {
     await node.connection!.exec(`sudo mkdir -p ${workdir}`);
     await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
     await node.connection!.exec(`sudo chown ${uid}:${gid} ${workdir}/garage.toml`);
+    
+    // Track config writing for cleanup
+    if (this.cleanupManager) {
+      this.cleanupManager.markConfigWritten(node.name);
+    }
 
     // Step 5: Generate docker-compose
     console.log(dim("  Generating docker-compose.yml..."));
     const composeContent = this.generateDockerCompose(node, uid, gid);
     await docker.deployWithCompose(composeContent, workdir);
+    
+    // Track container deployment for cleanup
+    if (this.cleanupManager) {
+      this.cleanupManager.markContainerDeployed(node.name, workdir);
+    }
 
     // Step 6: Wait for container to be healthy
     console.log(dim("  Waiting for container to start..."));

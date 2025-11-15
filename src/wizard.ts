@@ -5,6 +5,7 @@ import { SystemChecker } from "./checks/system.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
+import { CleanupManager } from "./cleanup.ts";
 
 export interface NodeConfig {
   name: string;
@@ -28,12 +29,14 @@ export interface ClusterConfig {
 
 export class Wizard {
   private display: DisplayManager;
+  private cleanupManager: CleanupManager;
   private node1?: NodeConfig;
   private node2?: NodeConfig;
   private clusterConfig?: ClusterConfig;
 
   constructor() {
     this.display = new DisplayManager();
+    this.cleanupManager = new CleanupManager();
   }
 
   async run() {
@@ -86,13 +89,28 @@ export class Wizard {
       console.log(green(bold("\n✓ Installation complete!")));
       this.showSuccessMessage();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(red(bold("\n✖ Installation failed:")), error.message);
       console.error(dim("\nFor troubleshooting, check the logs above."));
+      
+      // Offer to cleanup if anything was deployed
+      if (this.cleanupManager.hasDeploymentState()) {
+        const shouldCleanup = await Confirm.prompt({
+          message: "Would you like to rollback and clean up what was deployed?",
+          default: true,
+        });
+
+        if (shouldCleanup) {
+          await this.cleanupManager.cleanupAll([this.node1!, this.node2!].filter(n => n));
+        } else {
+          this.cleanupManager.displayManualCleanupInstructions([this.node1!, this.node2!].filter(n => n));
+        }
+      }
+      
       throw error;
     } finally {
       // Clean up SSH connections
-      await this.cleanup();
+      await this.closeConnections();
     }
   }
 
@@ -395,7 +413,8 @@ export class Wizard {
   private async deployCluster() {
     const garage = new GarageCluster(
       [this.node1!, this.node2!],
-      this.clusterConfig!
+      this.clusterConfig!,
+      this.cleanupManager
     );
 
     // Deploy to each node
@@ -452,7 +471,7 @@ export class Wizard {
     console.log("\n");
   }
 
-  private async cleanup() {
+  private async closeConnections() {
     // Close SSH connections
     if (this.node1?.connection) {
       await this.node1.connection.close();
