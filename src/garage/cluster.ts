@@ -176,7 +176,8 @@ services:
       }
 
       // Extract node ID from output (format: "NodeID: <id>")
-      const match = result.stdout.match(/([a-f0-9]{64})/);
+      // Use case-insensitive regex to match both uppercase and lowercase hex
+      const match = result.stdout.match(/([a-f0-9]{64})/i);
       if (!match) {
         throw new Error("Could not parse node ID");
       }
