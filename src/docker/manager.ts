@@ -101,6 +101,19 @@ export class DockerManager {
     // Write compose file
     await this.ssh.writeFile(`${workdir}/docker-compose.yml`, composeContent);
 
+    // Validate compose file before deployment
+    const validateResult = await this.dockerExec(`cd ${workdir} && docker compose config 2>&1`);
+    
+    if (validateResult.code !== 0) {
+      // Parse and display validation errors
+      const errorLines = validateResult.stderr.split('\n').filter(line => line.trim().length > 0);
+      const errorMessage = errorLines.slice(0, 5).join('\n  '); // Show first 5 error lines
+      
+      throw new Error(
+        `Docker Compose configuration is invalid:\n  ${errorMessage}\n\nPlease check the compose file at ${workdir}/docker-compose.yml`
+      );
+    }
+
     // Deploy using docker compose
     const result = await this.dockerExec(`cd ${workdir} && docker compose up -d`);
     
