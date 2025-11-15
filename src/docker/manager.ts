@@ -72,17 +72,19 @@ export class DockerManager {
   }
 
   async containerExists(name: string): Promise<boolean> {
+    // Use docker ps filter for exact name match
     const result = await this.dockerExec(
-      `docker ps -a | grep ${name} || echo "not_found"`
+      `docker ps -a --filter "name=^${name}$" --format "{{.Names}}"`
     );
-    return !result.stdout.includes("not_found");
+    return result.stdout.trim() === name;
   }
 
   async containerRunning(name: string): Promise<boolean> {
+    // Use docker ps filter for exact name match (only running containers)
     const result = await this.dockerExec(
-      `docker ps | grep ${name} || echo "not_running"`
+      `docker ps --filter "name=^${name}$" --format "{{.Names}}"`
     );
-    return !result.stdout.includes("not_running");
+    return result.stdout.trim() === name;
   }
 
   async deployWithCompose(composeContent: string, workdir: string): Promise<void> {
