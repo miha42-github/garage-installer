@@ -1149,6 +1149,159 @@ export class Wizard {
 
     await Deno.writeTextFile(configFile, JSON.stringify(config, null, 2));
     console.log(green(`✓ Configuration saved to ${configFile}`));
+
+    // Ask if user wants to run validation test
+    console.log("");
+    const runTest = await Confirm.prompt({
+      message: "Run validation test (create test bucket and upload file)?",
+      default: true,
+    });
+
+    if (runTest) {
+      await this.runValidationTest();
+    }
+  }
+
+  private async runValidationTest() {
+    console.log(bold(cyan("\n=== Running Validation Test ===")));
+    
+    try {
+      const testBucket = "installer-test-bucket";
+      const testKey = "installer-test-key";
+      const testFile = "test.html";
+      const testContent = "<html><body><h1>Garage Test - Success!</h1></body></html>";
+      
+      // Step 1: Create bucket
+      await withSpinner("Creating test bucket", async () => {
+        const result = await this.node1!.connection!.exec(
+          `docker exec garage garage bucket create ${testBucket}`
+        );
+        if (result.code !== 0 && !result.stderr.includes("already exists")) {
+          throw new Error(`Failed to create bucket: ${result.stderr}`);
+        }
+      });
+      
+      // Step 2: Create key
+      let accessKey = "";
+      let secretKey = "";
+      
+      await withSpinner("Creating test access key", async () => {
+        const result = await this.node1!.connection!.exec(
+          `docker exec garage garage key create ${testKey}`
+        );
+        
+        if (result.code !== 0 && !result.stderr.includes("already exists")) {
+          throw new Error(`Failed to create key: ${result.stderr}`);
+        }
+        
+        // Parse key info
+        const infoResult = await this.node1!.connection!.exec(
+          `docker exec garage garage key info ${testKey}`
+        );
+        
+        // Extract credentials from output
+        const accessKeyMatch = infoResult.stdout.match(/Key ID:\s+(\S+)/);
+        const secretKeyMatch = infoResult.stdout.match(/Secret key:\s+(\S+)/);
+        
+        if (accessKeyMatch) accessKey = accessKeyMatch[1];
+        if (secretKeyMatch) secretKey = secretKeyMatch[1];
+        
+        if (!accessKey || !secretKey) {
+          throw new Error("Failed to extract credentials from key info");
+        }
+      });
+      
+      // Step 3: Grant permissions
+      await withSpinner("Granting bucket permissions", async () => {
+        const result = await this.node1!.connection!.exec(
+          `docker exec garage garage bucket allow ${testBucket} --read --write --key ${testKey}`
+        );
+        if (result.code !== 0) {
+          throw new Error(`Failed to grant permissions: ${result.stderr}`);
+        }
+      });
+      
+      // Step 4: Upload test file using AWS CLI (if available) or curl
+      await withSpinner("Uploading test file", async () => {
+        // Create test file on remote
+        await this.node1!.connection!.exec(
+          `echo '${testContent}' > /tmp/${testFile}`
+        );
+        
+        // Check if aws-cli is available
+        const awsCheck = await this.node1!.connection!.exec("which aws");
+        
+        if (awsCheck.code === 0) {
+          // Use AWS CLI
+          const uploadCmd = `
+            AWS_ACCESS_KEY_ID='${accessKey}' \
+            AWS_SECRET_ACCESS_KEY='${secretKey}' \
+            aws --endpoint-url http://localhost:3900 \
+            s3 cp /tmp/${testFile} s3://${testBucket}/${testFile}
+          `;
+          const result = await this.node1!.connection!.exec(uploadCmd);
+          if (result.code !== 0) {
+            throw new Error(`Upload failed: ${result.stderr}`);
+          }
+        } else {
+          // Use curl with S3 API
+          console.log(yellow("\n  Note: AWS CLI not available, using curl (basic test)"));
+          const putCmd = `
+            curl -X PUT \
+            -H "Host: ${testBucket}.localhost:3900" \
+            -H "Content-Type: text/html" \
+            --data-binary '@/tmp/${testFile}' \
+            http://localhost:3900/${testFile}
+          `;
+          const result = await this.node1!.connection!.exec(putCmd);
+          if (result.code !== 0) {
+            throw new Error(`Upload failed: ${result.stderr}`);
+          }
+        }
+      });
+      
+      // Step 5: Verify download
+      await withSpinner("Verifying file retrieval", async () => {
+        const downloadCmd = `
+          curl -s http://localhost:3900/${testFile} \
+          -H "Host: ${testBucket}.localhost:3900"
+        `;
+        const result = await this.node1!.connection!.exec(downloadCmd);
+        
+        if (result.code !== 0) {
+          throw new Error(`Download failed: ${result.stderr}`);
+        }
+        
+        if (!result.stdout.includes("Garage Test")) {
+          throw new Error("Downloaded content doesn't match uploaded content");
+        }
+      });
+      
+      // Step 6: Cleanup test resources
+      await withSpinner("Cleaning up test resources", async () => {
+        await this.node1!.connection!.exec(`rm -f /tmp/${testFile}`);
+        await this.node1!.connection!.exec(
+          `docker exec garage garage bucket delete ${testBucket} --yes`
+        );
+        await this.node1!.connection!.exec(
+          `docker exec garage garage key delete ${testKey} --yes`
+        );
+      });
+      
+      console.log(green(bold("\n✓ Validation test passed!")));
+      console.log(dim("  • Bucket creation: ✓"));
+      console.log(dim("  • Access key creation: ✓"));
+      console.log(dim("  • File upload: ✓"));
+      console.log(dim("  • File retrieval: ✓"));
+      
+    } catch (error: any) {
+      console.log(red(bold("\n✖ Validation test failed")));
+      console.log(yellow("\nNote: The cluster may still be functional. Common issues:"));
+      console.log(dim("  • Cluster still initializing (wait a moment and check manually)"));
+      console.log(dim("  • Network configuration issues"));
+      console.log(dim("  • AWS CLI not installed (install for better S3 compatibility testing)"));
+      console.log(dim(`\nError details: ${error.message}`));
+    }
   }
 
   private showSuccessMessage() {
@@ -1160,19 +1313,27 @@ export class Wizard {
     console.log(`  http://${this.node1!.host}:3900`);
     console.log(`  http://${this.node2!.host}:3900`);
     
-    console.log("\n" + bold("Next steps:"));
-    console.log("1. Create a bucket:");
-    console.log(dim(`   ssh ${this.node1!.username}@${this.node1!.host}`));
-    console.log(dim(`   docker exec garage garage bucket create my-bucket`));
+    console.log("\n" + bold("Quick Start - Using AWS CLI:"));
+    console.log(dim("  # Configure AWS CLI"));
+    console.log(dim(`  aws configure set aws_access_key_id <your-key-id>`));
+    console.log(dim(`  aws configure set aws_secret_access_key <your-secret-key>`));
+    console.log(dim(`  aws configure set default.region garage`));
+    console.log(dim(""));
+    console.log(dim("  # Create a bucket"));
+    console.log(dim(`  aws --endpoint-url http://${this.node1!.host}:3900 s3 mb s3://my-bucket`));
+    console.log(dim(""));
+    console.log(dim("  # Upload a file"));
+    console.log(dim(`  aws --endpoint-url http://${this.node1!.host}:3900 s3 cp file.txt s3://my-bucket/`));
     
-    console.log("\n2. Create an access key:");
-    console.log(dim(`   docker exec garage garage key create my-key`));
-    
-    console.log("\n3. Grant access:");
-    console.log(dim(`   docker exec garage garage bucket allow my-bucket --read --write --key my-key`));
-    
-    console.log("\n4. Get credentials:");
-    console.log(dim(`   docker exec garage garage key info my-key`));
+    console.log("\n" + bold("Or manage via Garage CLI:"));
+    console.log(dim("  # SSH to a node"));
+    console.log(dim(`  ssh ${this.node1!.username}@${this.node1!.host}`));
+    console.log(dim(""));
+    console.log(dim("  # Create bucket and key"));
+    console.log(dim(`  docker exec garage garage bucket create my-bucket`));
+    console.log(dim(`  docker exec garage garage key create my-key`));
+    console.log(dim(`  docker exec garage garage bucket allow my-bucket --read --write --key my-key`));
+    console.log(dim(`  docker exec garage garage key info my-key`));
     
     console.log("\n" + bold("Documentation:"));
     console.log("  https://garagehq.deuxfleurs.fr/documentation/");
