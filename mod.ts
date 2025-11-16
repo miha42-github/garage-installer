@@ -11,18 +11,23 @@
  */
 
 import { Wizard } from "./src/wizard.ts";
-import { bold, blue, red } from "@std/fmt/colors";
+import { bold, blue, red, cyan } from "@std/fmt/colors";
 import { Select } from "@cliffy/prompt";
+import figlet from "npm:figlet@1.7.0";
 
 const VERSION = "1.0.0";
 
 async function main() {
   // Display banner
   console.clear();
-  console.log(bold(blue("╔═══════════════════════════════════════════════════════════╗")));
-  console.log(bold(blue("║") + "   " + bold("Garage Cluster Installer") + " v" + VERSION + "                  " + blue("║")));
-  console.log(bold(blue("║") + "   S3-Compatible Object Storage for Your Infrastructure   " + blue("║")));
-  console.log(bold(blue("╚═══════════════════════════════════════════════════════════╝")));
+  
+  const banner = figlet.textSync("GARAGE", {
+    font: "Standard",
+  });
+  
+  console.log(cyan(banner));
+  console.log(bold(blue("  Cluster Installer v" + VERSION)));
+  console.log("  S3-Compatible Object Storage for Your Infrastructure");
   console.log();
 
   try {
