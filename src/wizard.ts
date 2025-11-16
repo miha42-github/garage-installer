@@ -1,4 +1,4 @@
-import { Input, Confirm, Number as NumberPrompt, Select } from "@cliffy/prompt";
+import { Input, Confirm, Number as NumberPrompt, Select, Secret } from "@cliffy/prompt";
 import { green, yellow, red, bold, cyan, dim } from "@std/fmt/colors";
 import { SSHConnection } from "./ssh/connection.ts";
 import { SystemChecker } from "./checks/system.ts";
@@ -6,6 +6,7 @@ import { DockerManager } from "./docker/manager.ts";
 import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
 import { CleanupManager } from "./cleanup.ts";
+import { StateManager } from "./state.ts";
 import { withSpinner } from "./ui/spinner.ts";
 import { initLogger, getLogger } from "./logger.ts";
 import {
@@ -48,13 +49,16 @@ export interface ClusterConfig {
 export class Wizard {
   private display: DisplayManager;
   private cleanupManager: CleanupManager;
+  private stateManager: StateManager;
   private node1?: NodeConfig;
   private node2?: NodeConfig;
   private clusterConfig?: ClusterConfig;
+  private resumeMode: boolean = false;
 
   constructor() {
     this.display = new DisplayManager();
     this.cleanupManager = new CleanupManager();
+    this.stateManager = new StateManager();
   }
 
   async run() {
@@ -62,6 +66,55 @@ export class Wizard {
     const logger = initLogger();
     console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
     await logger.info("=== Garage Installer Started ===");
+
+    // Check for existing state
+    const hasExistingState = await this.stateManager.exists();
+    if (hasExistingState) {
+      await this.stateManager.load();
+      const state = this.stateManager.getState();
+      
+      if (state && this.stateManager.isInProgress()) {
+        console.log(yellow("⚠️  Found previous installation in progress"));
+        const lastPhase = this.stateManager.getLastCompletedPhase();
+        const nextPhase = this.stateManager.getNextPendingPhase();
+        
+        if (lastPhase) {
+          console.log(`   Last completed: ${bold(lastPhase)}`);
+        }
+        if (nextPhase) {
+          console.log(`   Next step: ${bold(nextPhase)}`);
+        }
+        console.log(`   Last updated: ${dim(new Date(state.lastUpdated).toLocaleString())}\n`);
+        
+        const action = await Select.prompt({
+          message: "What would you like to do?",
+          options: [
+            { name: "Resume installation from last checkpoint", value: "resume" },
+            { name: "Start fresh (clear previous state)", value: "fresh" },
+            { name: "Cancel", value: "cancel" },
+          ],
+        });
+        
+        if (action === "cancel") {
+          console.log("Installation cancelled.");
+          await logger.info("Installation cancelled by user");
+          return;
+        }
+        
+        if (action === "resume") {
+          this.resumeMode = true;
+          await this.resumeInstallation(state);
+          return;
+        }
+        
+        // Fresh start - clear old state
+        await this.stateManager.clear();
+      }
+    }
+    
+    // Initialize new state
+    this.stateManager.initializeState();
+    await this.stateManager.save();
 
     console.log(bold("This wizard will guide you through installing a 2-node Garage cluster.\n"));
     console.log("You'll need:");
@@ -78,6 +131,7 @@ export class Wizard {
     if (!proceed) {
       console.log(yellow("Installation cancelled."));
       await logger.info("Installation cancelled by user");
+      await this.stateManager.clear();
       return;
     }
 
@@ -85,22 +139,48 @@ export class Wizard {
       // Phase 1: Node Discovery
       console.log(bold(cyan("\n=== Phase 1: Node Configuration ===")));
       await logger.info("Phase 1: Node Configuration started");
+      this.stateManager.updatePhase("nodeConfig", "in-progress");
+      await this.stateManager.save();
+      
       await this.collectNodeInfo();
+      
+      this.stateManager.updatePhase("nodeConfig", "completed");
+      this.stateManager.updateNodes([this.node1!, this.node2!]);
+      await this.stateManager.save();
 
       // Phase 2: SSH Connectivity
       console.log(bold(cyan("\n=== Phase 2: Testing Connectivity ===")));
       await logger.info("Phase 2: Testing Connectivity started");
+      this.stateManager.updatePhase("connectivity", "in-progress");
+      await this.stateManager.save();
+      
       await this.testConnectivity();
+      
+      this.stateManager.updatePhase("connectivity", "completed");
+      await this.stateManager.save();
 
       // Phase 3: Preflight Checks
       console.log(bold(cyan("\n=== Phase 3: System Checks ===")));
       await logger.info("Phase 3: System Checks started");
+      this.stateManager.updatePhase("preflightChecks", "in-progress");
+      await this.stateManager.save();
+      
       await this.runPreflightChecks();
+      
+      this.stateManager.updatePhase("preflightChecks", "completed");
+      await this.stateManager.save();
 
       // Phase 4: Cluster Configuration
       console.log(bold(cyan("\n=== Phase 4: Cluster Configuration ===")));
       await logger.info("Phase 4: Cluster Configuration started");
+      this.stateManager.updatePhase("clusterConfig", "in-progress");
+      await this.stateManager.save();
+      
       await this.configureCluster();
+      
+      this.stateManager.updatePhase("clusterConfig", "completed");
+      this.stateManager.updateCluster(this.clusterConfig!);
+      await this.stateManager.save();
 
       // Phase 5: Deployment Summary
       console.log(bold(cyan("\n=== Phase 5: Deployment Summary ===")));
@@ -110,21 +190,53 @@ export class Wizard {
       // Phase 6: Deploy
       console.log(bold(cyan("\n=== Phase 6: Deploying Garage ===")));
       await logger.info("Phase 6: Deploying Garage started");
+      this.stateManager.updatePhase("deployment", "in-progress");
+      await this.stateManager.save();
+      
       await this.deployCluster();
+      
+      this.stateManager.updatePhase("deployment", "completed");
+      await this.stateManager.save();
+
+      // Phase 6.5: Configure cluster
+      this.stateManager.updatePhase("configuration", "in-progress");
+      await this.stateManager.save();
+      
+      // (Configuration is part of deployCluster, just mark complete)
+      this.stateManager.updatePhase("configuration", "completed");
+      await this.stateManager.save();
 
       // Phase 7: Post-Install
       console.log(bold(cyan("\n=== Phase 7: Finalizing ===")));
       await logger.info("Phase 7: Finalizing started");
+      this.stateManager.updatePhase("postInstall", "in-progress");
+      await this.stateManager.save();
+      
       await this.postInstall();
+      
+      this.stateManager.updatePhase("postInstall", "completed");
+      await this.stateManager.save();
 
       console.log(green(bold("\n✓ Installation complete!")));
       await logger.info("Installation completed successfully");
       this.showSuccessMessage();
+      
+      // Clear state after successful installation
+      await this.stateManager.clear();
 
     } catch (error: any) {
       await logger.error("Installation failed", { error: error.message, stack: error.stack });
       console.error(red(bold("\n✖ Installation failed:")), error.message);
       console.error(dim(`\nFor troubleshooting, check the log file: ${logger.getLogPath()}`));
+      
+      // Mark current phase as failed
+      const nextPhase = this.stateManager.getNextPendingPhase();
+      if (nextPhase) {
+        this.stateManager.updatePhase(nextPhase, "failed");
+        await this.stateManager.save();
+      }
+      
+      console.log(yellow("\n💾 Installation state saved. You can resume later by running the installer again."));
       
       // Offer to cleanup if anything was deployed
       if (this.cleanupManager.hasDeploymentState()) {
@@ -135,6 +247,7 @@ export class Wizard {
 
         if (shouldCleanup) {
           await this.cleanupManager.cleanupAll([this.node1!, this.node2!].filter(n => n));
+          await this.stateManager.clear();
         } else {
           this.cleanupManager.displayManualCleanupInstructions([this.node1!, this.node2!].filter(n => n));
         }
@@ -143,6 +256,150 @@ export class Wizard {
       throw error;
     } finally {
       // Clean up SSH connections
+      await this.closeConnections();
+    }
+  }
+
+  private async resumeInstallation(state: any) {
+    const logger = getLogger();
+    await logger.info("=== Resuming Garage Installation ===");
+
+    console.log(bold("\nResuming installation from saved state...\n"));
+
+    try {
+      // Restore node configuration from state
+      if (state.nodes && state.nodes.length >= 2) {
+        this.node1 = {
+          ...state.nodes[0],
+          connection: undefined,
+        };
+        this.node2 = {
+          ...state.nodes[1],
+          connection: undefined,
+        };
+        
+        // Prompt for passwords if using password auth (not saved in state)
+        if (this.node1.authMethod === "password") {
+          const password = await Input.prompt({
+            message: `Password for ${this.node1.username}@${this.node1.host}:`,
+            type: "password",
+          });
+          this.node1.password = password;
+        }
+        
+        if (this.node2.authMethod === "password") {
+          const password = await Input.prompt({
+            message: `Password for ${this.node2.username}@${this.node2.host}:`,
+            type: "password",
+          });
+          this.node2.password = password;
+        }
+      }
+
+      // Restore cluster configuration
+      if (state.cluster) {
+        this.clusterConfig = state.cluster;
+      }
+
+      // Determine where to resume from
+      const nextPhase = this.stateManager.getNextPendingPhase();
+      
+      if (!nextPhase) {
+        console.log(green("✓ Installation already complete!"));
+        return;
+      }
+
+      console.log(yellow(`Resuming from phase: ${bold(nextPhase)}\n`));
+
+      // Reconnect to nodes if needed
+      if (nextPhase !== "nodeConfig") {
+        console.log("Reconnecting to nodes...");
+        await this.testConnectivity();
+      }
+
+      // Resume from the appropriate phase
+      if (nextPhase === "nodeConfig" || state.phases.nodeConfig !== "completed") {
+        console.log(bold(cyan("\n=== Phase 1: Node Configuration ===")));
+        this.stateManager.updatePhase("nodeConfig", "in-progress");
+        await this.stateManager.save();
+        await this.collectNodeInfo();
+        this.stateManager.updatePhase("nodeConfig", "completed");
+        this.stateManager.updateNodes([this.node1!, this.node2!]);
+        await this.stateManager.save();
+      }
+
+      if (nextPhase === "connectivity" || (state.phases.nodeConfig === "completed" && state.phases.connectivity !== "completed")) {
+        console.log(bold(cyan("\n=== Phase 2: Testing Connectivity ===")));
+        this.stateManager.updatePhase("connectivity", "in-progress");
+        await this.stateManager.save();
+        await this.testConnectivity();
+        this.stateManager.updatePhase("connectivity", "completed");
+        await this.stateManager.save();
+      }
+
+      if (nextPhase === "preflightChecks" || (state.phases.connectivity === "completed" && state.phases.preflightChecks !== "completed")) {
+        console.log(bold(cyan("\n=== Phase 3: System Checks ===")));
+        this.stateManager.updatePhase("preflightChecks", "in-progress");
+        await this.stateManager.save();
+        await this.runPreflightChecks();
+        this.stateManager.updatePhase("preflightChecks", "completed");
+        await this.stateManager.save();
+      }
+
+      if (nextPhase === "clusterConfig" || (state.phases.preflightChecks === "completed" && state.phases.clusterConfig !== "completed")) {
+        console.log(bold(cyan("\n=== Phase 4: Cluster Configuration ===")));
+        this.stateManager.updatePhase("clusterConfig", "in-progress");
+        await this.stateManager.save();
+        await this.configureCluster();
+        this.stateManager.updatePhase("clusterConfig", "completed");
+        this.stateManager.updateCluster(this.clusterConfig!);
+        await this.stateManager.save();
+      }
+
+      if (nextPhase === "deployment" || (state.phases.clusterConfig === "completed" && state.phases.deployment !== "completed")) {
+        console.log(bold(cyan("\n=== Phase 5: Deployment Summary ===")));
+        await this.showSummary();
+
+        console.log(bold(cyan("\n=== Phase 6: Deploying Garage ===")));
+        this.stateManager.updatePhase("deployment", "in-progress");
+        await this.stateManager.save();
+        await this.deployCluster();
+        this.stateManager.updatePhase("deployment", "completed");
+        this.stateManager.updatePhase("configuration", "completed");
+        await this.stateManager.save();
+      }
+
+      if (nextPhase === "postInstall" || (state.phases.deployment === "completed" && state.phases.postInstall !== "completed")) {
+        console.log(bold(cyan("\n=== Phase 7: Finalizing ===")));
+        this.stateManager.updatePhase("postInstall", "in-progress");
+        await this.stateManager.save();
+        await this.postInstall();
+        this.stateManager.updatePhase("postInstall", "completed");
+        await this.stateManager.save();
+      }
+
+      console.log(green(bold("\n✓ Installation complete!")));
+      await logger.info("Installation completed successfully (resumed)");
+      this.showSuccessMessage();
+      
+      // Clear state after successful installation
+      await this.stateManager.clear();
+
+    } catch (error: any) {
+      await logger.error("Installation failed during resume", { error: error.message, stack: error.stack });
+      console.error(red(bold("\n✖ Installation failed:")), error.message);
+      
+      // Mark current phase as failed
+      const nextPhase = this.stateManager.getNextPendingPhase();
+      if (nextPhase) {
+        this.stateManager.updatePhase(nextPhase, "failed");
+        await this.stateManager.save();
+      }
+      
+      console.log(yellow("\n💾 Installation state saved. You can resume later by running the installer again."));
+      
+      throw error;
+    } finally {
       await this.closeConnections();
     }
   }
@@ -171,10 +428,50 @@ export class Wizard {
     }
 
     try {
-      // Collect node information
-      console.log(bold(cyan("\n=== Connecting to Nodes ===")));
-      await this.collectNodeInfo();
-      await this.testConnectivity();
+      // Try to load node information from saved state
+      let usesSavedState = false;
+      if (await this.stateManager.exists()) {
+        await this.stateManager.load();
+        const state = this.stateManager.getState();
+        
+        if (state && state.nodes && state.nodes.length === 2) {
+          console.log(green("✓ Found saved installation state"));
+          console.log(`  • ${state.nodes[0].name} (${state.nodes[0].host})`);
+          console.log(`  • ${state.nodes[1].name} (${state.nodes[1].host})\n`);
+          
+          const useSaved = await Confirm.prompt({
+            message: "Use these nodes for uninstall?",
+            default: true,
+          });
+          
+          if (useSaved) {
+            // Restore node configurations (but need to prompt for passwords)
+            this.node1 = { ...state.nodes[0] as NodeConfig };
+            this.node2 = { ...state.nodes[1] as NodeConfig };
+            
+            console.log(bold(cyan("\n=== Connecting to Nodes ===")));
+            
+            // Prompt for passwords (not stored in state)
+            this.node1.password = await Secret.prompt({
+              message: `Password for ${this.node1.name} (${this.node1.username}@${this.node1.host}):`,
+            });
+            
+            this.node2.password = await Secret.prompt({
+              message: `Password for ${this.node2.name} (${this.node2.username}@${this.node2.host}):`,
+            });
+            
+            await this.testConnectivity();
+            usesSavedState = true;
+          }
+        }
+      }
+      
+      // If not using saved state, collect node information manually
+      if (!usesSavedState) {
+        console.log(bold(cyan("\n=== Connecting to Nodes ===")));
+        await this.collectNodeInfo();
+        await this.testConnectivity();
+      }
 
       // Confirm one more time with specific node details
       console.log(yellow("\nYou are about to uninstall Garage from:"));
