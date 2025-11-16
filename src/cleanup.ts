@@ -121,14 +121,13 @@ export class CleanupManager {
 
       console.log(`${node.name} (${node.host}):`);
       console.log(dim(`  ssh ${node.username}@${node.host}`));
-      console.log(dim(`  sudo docker stop garage && sudo docker rm garage`));
+      console.log(dim(`  docker stop garage && docker rm garage`));
       
       if (nodeState.workdir) {
-        console.log(dim(`  sudo rm -rf ${nodeState.workdir}`));
+        console.log(dim(`  rm -rf ${nodeState.workdir}`));
       }
       
-      console.log(dim(`  # Optional: Remove data directories`));
-      console.log(dim(`  # sudo rm -rf /var/lib/garage`));
+      console.log(dim(`  # Optional: Remove data directories (if customized)`));
       console.log();
     }
   }

@@ -10,9 +10,9 @@ export const DEFAULT_PORTS = {
 } as const;
 
 export const DEFAULT_PATHS = {
-  workdir: "/opt/garage",
-  dataDir: "/var/lib/garage/data",
-  metaDir: "/var/lib/garage/meta",
+  workdir: "$HOME/garage",
+  dataDir: "$HOME/garage/data",
+  metaDir: "$HOME/garage/meta",
 } as const;
 
 export const DEFAULT_GARAGE_VERSION = "v2.1.0";

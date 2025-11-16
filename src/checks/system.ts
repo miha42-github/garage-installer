@@ -124,7 +124,8 @@ export class SystemChecker {
   }
 
   private async checkDiskSpace(): Promise<CheckResult> {
-    const result = await this.ssh.exec("df -BG /var/lib | tail -1 | awk '{print $4}'");
+    // Check disk space in the home directory (where garage data will be stored by default)
+    const result = await this.ssh.exec("df -BG ~ | tail -1 | awk '{print $4}'");
     
     if (result.code !== 0) {
       return {
