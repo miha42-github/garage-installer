@@ -68,7 +68,7 @@ Interactive wizard that deploys a two-node dev/test Garage S3-compatible object 
 ```
 
 ## Quick Start
-**NOTE**: binaries for the installer aren't yet available. This practically means that you must pull the source code, make sure that Deno is installed, and run from source.  Instructions for installing Deno can be found below in the `Development > Prerequisites`.
+**NOTE**: binaries for the installer aren't yet available. This practically means that you must pull the source code, make sure that Deno is installed, and run from source.  Instructions for installing Deno can be found below in the [Development > Prerequisites](https://github.com/miha42-github/garage-installer/blob/main/README.md#prerequisites-1).
 
 ```bash
 git clone https://github.com/miha42-github/garage-installer.git
