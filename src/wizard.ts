@@ -147,6 +147,116 @@ export class Wizard {
     }
   }
 
+  async runUninstall() {
+    // Initialize logging
+    const logger = initLogger();
+    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
+    await logger.info("=== Garage Uninstaller Started ===");
+
+    console.log(bold("This will remove Garage from your nodes.\n"));
+    console.log(yellow("⚠️  Warning: This will:"));
+    console.log("  • Stop and remove Garage containers");
+    console.log("  • Remove configuration files");
+    console.log("  • Optionally remove data directories\n");
+
+    const proceed = await Confirm.prompt({
+      message: "Are you sure you want to uninstall?",
+      default: false,
+    });
+
+    if (!proceed) {
+      console.log("Uninstall cancelled.");
+      await logger.info("Uninstall cancelled by user");
+      return;
+    }
+
+    try {
+      // Collect node information
+      console.log(bold(cyan("\n=== Connecting to Nodes ===")));
+      await this.collectNodeInfo();
+      await this.testConnectivity();
+
+      // Confirm one more time with specific node details
+      console.log(yellow("\nYou are about to uninstall Garage from:"));
+      console.log(`  • ${this.node1!.name} (${this.node1!.host})`);
+      console.log(`  • ${this.node2!.name} (${this.node2!.host})`);
+      
+      const finalConfirm = await Confirm.prompt({
+        message: "Proceed with uninstallation?",
+        default: false,
+      });
+
+      if (!finalConfirm) {
+        console.log("Uninstall cancelled.");
+        return;
+      }
+
+      // Ask about data directories
+      const removeData = await Confirm.prompt({
+        message: "Also remove data directories (this will delete all stored data)?",
+        default: false,
+      });
+
+      // Perform uninstall
+      console.log(bold(cyan("\n=== Uninstalling Garage ===")));
+      await logger.info("Starting uninstall process");
+
+      const nodes = [this.node1!, this.node2!];
+      
+      for (const node of nodes) {
+        console.log(`\nUninstalling from ${bold(node.name)}...`);
+        
+        const docker = new DockerManager(node.connection!);
+        await docker.detectSudoRequirement();
+
+        // Stop and remove container
+        console.log(dim("  Stopping container..."));
+        await docker.stopContainer("garage");
+        await docker.removeContainer("garage");
+        console.log(green("  ✓ Container removed"));
+
+        // Get workdir location
+        const workdirResult = await node.connection!.exec("ls -d ~/garage 2>/dev/null || echo ''");
+        const workdir = workdirResult.stdout.trim();
+
+        // Remove workdir (contains docker-compose.yml and garage.toml)
+        if (workdir) {
+          console.log(dim("  Removing configuration..."));
+          await node.connection!.exec(`rm -rf ${workdir}`);
+          console.log(green("  ✓ Configuration removed"));
+        }
+
+        // Optionally remove data directories
+        if (removeData) {
+          console.log(dim("  Removing data directories..."));
+          await node.connection!.exec("rm -rf ~/garage 2>/dev/null || true");
+          console.log(green("  ✓ Data directories removed"));
+        } else {
+          console.log(yellow("  ℹ Data directories preserved at ~/garage/data and ~/garage/meta"));
+        }
+
+        console.log(green(`✓ ${node.name} uninstalled`));
+      }
+
+      console.log(green(bold("\n✓ Uninstallation complete!")));
+      await logger.info("Uninstallation completed successfully");
+
+      if (!removeData) {
+        console.log(yellow("\nNote: Data directories were preserved."));
+        console.log("To manually remove them later, run on each node:");
+        console.log(dim("  rm -rf ~/garage/data ~/garage/meta"));
+      }
+
+    } catch (error: any) {
+      await logger.error("Uninstallation failed", { error: error.message, stack: error.stack });
+      console.error(red(bold("\n✖ Uninstallation failed:")), error.message);
+      throw error;
+    } finally {
+      // Clean up SSH connections
+      await this.closeConnections();
+    }
+  }
+
   private isValidHostOrIP(value: string): boolean {
     if (!value) return false;
 
