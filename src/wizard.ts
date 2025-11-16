@@ -429,9 +429,58 @@ export class Wizard {
     }
 
     try {
-      // Try to load node information from saved state
-      let usesSavedState = false;
-      if (await this.stateManager.exists()) {
+      // Try to load node information from config file or saved state
+      let usesSavedConfig = false;
+      
+      // First check for garage-cluster-config.json
+      const configFile = "garage-cluster-config.json";
+      try {
+        const configContent = await Deno.readTextFile(configFile);
+        const config = JSON.parse(configContent);
+        
+        if (config.nodes && config.nodes.length === 2) {
+          console.log(green(`✓ Found ${configFile}`));
+          console.log(`  • ${config.nodes[0].name} (${config.nodes[0].host})`);
+          console.log(`  • ${config.nodes[1].name} (${config.nodes[1].host})\n`);
+          
+          const useSaved = await Confirm.prompt({
+            message: "Use these nodes for uninstall?",
+            default: true,
+          });
+          
+          if (useSaved) {
+            // Initialize node configurations from config file
+            this.node1 = {
+              name: config.nodes[0].name,
+              host: config.nodes[0].host,
+              port: 22,
+              username: Deno.env.get("USER") || "ubuntu",
+              authMethod: "key",
+              keyPath: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
+            };
+            
+            this.node2 = {
+              name: config.nodes[1].name,
+              host: config.nodes[1].host,
+              port: 22,
+              username: Deno.env.get("USER") || "ubuntu",
+              authMethod: "key",
+              keyPath: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
+            };
+            
+            console.log(bold(cyan("\n=== Connecting to Nodes ===")));
+            console.log(dim("Using default SSH settings (port 22, current user, ~/.ssh/id_rsa)\n"));
+            
+            await this.testConnectivity();
+            usesSavedConfig = true;
+          }
+        }
+      } catch {
+        // Config file doesn't exist or is invalid, try state file
+      }
+      
+      // If not using config file, try to load from saved state
+      if (!usesSavedConfig && await this.stateManager.exists()) {
         await this.stateManager.load();
         const state = this.stateManager.getState();
         
@@ -462,13 +511,13 @@ export class Wizard {
             });
             
             await this.testConnectivity();
-            usesSavedState = true;
+            usesSavedConfig = true;
           }
         }
       }
       
-      // If not using saved state, collect node information manually
-      if (!usesSavedState) {
+      // If not using saved config or state, collect node information manually
+      if (!usesSavedConfig) {
         console.log(bold(cyan("\n=== Connecting to Nodes ===")));
         await this.collectNodeInfo();
         await this.testConnectivity();
