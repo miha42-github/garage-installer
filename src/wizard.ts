@@ -449,30 +449,56 @@ export class Wizard {
           });
           
           if (useSaved) {
-            // Initialize node configurations from config file
-            this.node1 = {
-              name: config.nodes[0].name,
-              host: config.nodes[0].host,
-              port: 22,
-              username: Deno.env.get("USER") || "ubuntu",
-              authMethod: "key",
-              keyPath: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-            };
+            // Find available SSH key
+            const homeDir = Deno.env.get("HOME") || "";
+            const commonKeys = [
+              `${homeDir}/.ssh/id_ed25519`,
+              `${homeDir}/.ssh/id_rsa`,
+              `${homeDir}/.ssh/id_ecdsa`,
+            ];
             
-            this.node2 = {
-              name: config.nodes[1].name,
-              host: config.nodes[1].host,
-              port: 22,
-              username: Deno.env.get("USER") || "ubuntu",
-              authMethod: "key",
-              keyPath: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-            };
+            let foundKey = "";
+            for (const keyPath of commonKeys) {
+              try {
+                await Deno.stat(keyPath);
+                foundKey = keyPath;
+                break;
+              } catch {
+                // Key doesn't exist, try next one
+              }
+            }
             
-            console.log(bold(cyan("\n=== Connecting to Nodes ===")));
-            console.log(dim("Using default SSH settings (port 22, current user, ~/.ssh/id_rsa)\n"));
-            
-            await this.testConnectivity();
-            usesSavedConfig = true;
+            if (!foundKey) {
+              console.log(yellow("\n⚠ No SSH key found in ~/.ssh/"));
+              console.log(dim("Please enter SSH credentials manually.\n"));
+              // Fall through to manual collection
+            } else {
+              // Initialize node configurations from config file
+              this.node1 = {
+                name: config.nodes[0].name,
+                host: config.nodes[0].host,
+                port: 22,
+                username: Deno.env.get("USER") || "ubuntu",
+                authMethod: "key",
+                keyPath: foundKey,
+              };
+              
+              this.node2 = {
+                name: config.nodes[1].name,
+                host: config.nodes[1].host,
+                port: 22,
+                username: Deno.env.get("USER") || "ubuntu",
+                authMethod: "key",
+                keyPath: foundKey,
+              };
+              
+              const keyName = foundKey.split('/').pop();
+              console.log(bold(cyan("\n=== Connecting to Nodes ===")));
+              console.log(dim(`Using default SSH settings (port 22, current user, ~/.ssh/${keyName})\n`));
+              
+              await this.testConnectivity();
+              usesSavedConfig = true;
+            }
           }
         }
       } catch {
@@ -1831,6 +1857,7 @@ export class Wizard {
             env: {
               AWS_ACCESS_KEY_ID: accessKey,
               AWS_SECRET_ACCESS_KEY: secretKey,
+              AWS_EC2_METADATA_DISABLED: "true",
             },
             stdout: "piped",
             stderr: "piped",
@@ -1892,6 +1919,7 @@ export class Wizard {
             env: {
               AWS_ACCESS_KEY_ID: accessKey,
               AWS_SECRET_ACCESS_KEY: secretKey,
+              AWS_EC2_METADATA_DISABLED: "true",
             },
             stdout: "null",
             stderr: "null",
@@ -1951,6 +1979,7 @@ export class Wizard {
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
             AWS_SECRET_ACCESS_KEY: secretKey,
+            AWS_EC2_METADATA_DISABLED: "true",
           },
           stdout: "piped",
           stderr: "piped",
@@ -1976,6 +2005,7 @@ export class Wizard {
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
             AWS_SECRET_ACCESS_KEY: secretKey,
+            AWS_EC2_METADATA_DISABLED: "true",
           },
           stdout: "piped",
           stderr: "piped",
@@ -2010,6 +2040,7 @@ export class Wizard {
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
             AWS_SECRET_ACCESS_KEY: secretKey,
+            AWS_EC2_METADATA_DISABLED: "true",
           },
           stdout: "null",
           stderr: "null",
