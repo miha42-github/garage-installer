@@ -42,12 +42,15 @@ async function main() {
         message: "What would you like to do?",
         options: [
           { name: "Install Garage cluster", value: "install" },
+          { name: "Validate existing cluster", value: "validate" },
           { name: "Uninstall Garage cluster", value: "uninstall" },
         ],
       });
       
       if (action === "uninstall") {
         await wizard.runUninstall();
+      } else if (action === "validate") {
+        await wizard.runValidation();
       } else {
         await wizard.run();
       }

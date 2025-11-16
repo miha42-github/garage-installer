@@ -1459,6 +1459,34 @@ export class Wizard {
     }
   }
 
+  async runValidation() {
+    // Initialize logging
+    const logger = initLogger();
+    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
+    await logger.info("=== Garage Validation Started ===");
+
+    console.log(bold("This will validate an existing Garage installation.\n"));
+
+    try {
+      // Collect node information
+      console.log(bold(cyan("\n=== Connecting to Nodes ===")));
+      await this.collectNodeInfo();
+      await this.testConnectivity();
+
+      // Run validation test
+      await this.runValidationTest();
+
+      console.log(green(bold("\n✓ Validation complete!")));
+      await logger.info("Validation completed successfully");
+    } catch (error: any) {
+      await logger.error("Validation failed", { error: error.message, stack: error.stack });
+      console.error(red(bold("\n✖ Validation failed:")), error.message);
+      throw error;
+    } finally {
+      await this.closeConnections();
+    }
+  }
+
   private async runValidationTest() {
     console.log(bold(cyan("\n=== Running Validation Test ===")));
     
@@ -1471,7 +1499,7 @@ export class Wizard {
       // Step 1: Create bucket
       await withSpinner("Creating test bucket", async () => {
         const result = await this.node1!.connection!.exec(
-          `docker exec garage garage bucket create ${testBucket}`
+          `docker exec garage /garage bucket create ${testBucket}`
         );
         if (result.code !== 0 && !result.stderr.includes("already exists")) {
           throw new Error(`Failed to create bucket: ${result.stderr}`);
@@ -1484,7 +1512,7 @@ export class Wizard {
       
       await withSpinner("Creating test access key", async () => {
         const result = await this.node1!.connection!.exec(
-          `docker exec garage garage key create ${testKey}`
+          `docker exec garage /garage key create ${testKey}`
         );
         
         if (result.code !== 0 && !result.stderr.includes("already exists")) {
@@ -1493,7 +1521,7 @@ export class Wizard {
         
         // Parse key info
         const infoResult = await this.node1!.connection!.exec(
-          `docker exec garage garage key info ${testKey}`
+          `docker exec garage /garage key info ${testKey}`
         );
         
         // Extract credentials from output
@@ -1511,7 +1539,7 @@ export class Wizard {
       // Step 3: Grant permissions
       await withSpinner("Granting bucket permissions", async () => {
         const result = await this.node1!.connection!.exec(
-          `docker exec garage garage bucket allow ${testBucket} --read --write --key ${testKey}`
+          `docker exec garage /garage bucket allow ${testBucket} --read --write --key ${testKey}`
         );
         if (result.code !== 0) {
           throw new Error(`Failed to grant permissions: ${result.stderr}`);
@@ -1578,10 +1606,10 @@ export class Wizard {
       await withSpinner("Cleaning up test resources", async () => {
         await this.node1!.connection!.exec(`rm -f /tmp/${testFile}`);
         await this.node1!.connection!.exec(
-          `docker exec garage garage bucket delete ${testBucket} --yes`
+          `docker exec garage /garage bucket delete ${testBucket} --yes`
         );
         await this.node1!.connection!.exec(
-          `docker exec garage garage key delete ${testKey} --yes`
+          `docker exec garage /garage key delete ${testKey} --yes`
         );
       });
       
@@ -1627,10 +1655,10 @@ export class Wizard {
     console.log(dim(`  ssh ${this.node1!.username}@${this.node1!.host}`));
     console.log(dim(""));
     console.log(dim("  # Create bucket and key"));
-    console.log(dim(`  docker exec garage garage bucket create my-bucket`));
-    console.log(dim(`  docker exec garage garage key create my-key`));
-    console.log(dim(`  docker exec garage garage bucket allow my-bucket --read --write --key my-key`));
-    console.log(dim(`  docker exec garage garage key info my-key`));
+    console.log(dim(`  docker exec garage /garage bucket create my-bucket`));
+    console.log(dim(`  docker exec garage /garage key create my-key`));
+    console.log(dim(`  docker exec garage /garage bucket allow my-bucket --read --write --key my-key`));
+    console.log(dim(`  docker exec garage /garage key info my-key`));
     
     console.log("\n" + bold("Documentation:"));
     console.log("  https://garagehq.deuxfleurs.fr/documentation/");
