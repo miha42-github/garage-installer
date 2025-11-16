@@ -42,8 +42,15 @@ export class GarageCluster {
     await docker.stopContainer("garage");
     await docker.removeContainer("garage");
 
-    // Step 3: Create directories (in user's home directory, no sudo needed)
+    // Step 3: Clean up any existing directories and recreate (in case previous install failed with wrong permissions)
     const workdir = this.config.workdir;
+    
+    // Check if directories exist and remove them (handles both user-owned and potentially root-owned from failed installs)
+    await node.connection!.exec(`rm -rf ${workdir} 2>/dev/null || sudo rm -rf ${workdir} 2>/dev/null || true`);
+    await node.connection!.exec(`rm -rf ${this.config.dataDir} 2>/dev/null || sudo rm -rf ${this.config.dataDir} 2>/dev/null || true`);
+    await node.connection!.exec(`rm -rf ${this.config.metaDir} 2>/dev/null || sudo rm -rf ${this.config.metaDir} 2>/dev/null || true`);
+    
+    // Create fresh directories as current user
     await node.connection!.exec(`mkdir -p ${workdir}`);
     await node.connection!.exec(`mkdir -p ${this.config.dataDir}`);
     await node.connection!.exec(`mkdir -p ${this.config.metaDir}`);

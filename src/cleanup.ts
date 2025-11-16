@@ -100,7 +100,7 @@ export class CleanupManager {
     // Remove docker compose file and workdir
     if (state.workdir) {
       console.log(dim(`    Removing workdir...`));
-      await node.connection.exec(`sudo rm -rf ${state.workdir}`);
+      await node.connection.exec(`rm -rf ${state.workdir}`);
     }
 
     // Note: We don't remove data/meta directories as they might contain data
