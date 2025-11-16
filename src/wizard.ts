@@ -32,6 +32,7 @@ export interface NodeConfig {
 
 export interface ClusterConfig {
   rpcSecret: string;
+  adminToken: string;
   capacityPerNode: string;
   dataDir: string;
   metaDir: string;
@@ -1362,12 +1363,15 @@ export class Wizard {
       }
     }
 
-    // Generate RPC secret
+    // Generate RPC secret and admin token
     const rpcSecret = this.generateRPCSecret();
+    const adminToken = this.generateRPCSecret();
     console.log(dim(`\nGenerated RPC secret: ${rpcSecret.substring(0, 16)}...`));
+    console.log(dim(`Generated Admin token: ${adminToken.substring(0, 16)}...`));
 
     this.clusterConfig = {
       rpcSecret,
+      adminToken,
       capacityPerNode: capacity,
       dataDir,
       metaDir,
@@ -1588,7 +1592,7 @@ export class Wizard {
         const nodeHost = config.nodes[0].host;
         endpoint = `http://${nodeHost}:${s3Port}`;
         adminEndpoint = `http://${nodeHost}:${adminPort}`;
-        adminToken = config.cluster?.rpcSecret || "";
+        adminToken = config.cluster?.adminToken || "";
         
         console.log(dim(`  S3 API: ${endpoint}`));
         console.log(dim(`  Admin API: ${adminEndpoint}\n`));

@@ -169,6 +169,7 @@ index = "index.html"
 
 [admin]
 api_bind_addr = "[::]:${this.config.ports.admin}"
+admin_token = "${this.config.adminToken}"
 `.trim();
   }
 
