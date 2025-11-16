@@ -94,9 +94,10 @@ export class GarageCluster {
       ? `bootstrap_peers = [\n  "${bootstrapPeers.join('",\n  "')}"\n]`
       : `bootstrap_peers = []`;
       
+    // Use container paths (Docker mounts host paths to these locations)
     return `
-metadata_dir = "${this.config.metaDir}"
-data_dir = "${this.config.dataDir}"
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
 
 db_engine = "lmdb"
 
