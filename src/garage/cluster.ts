@@ -236,7 +236,7 @@ services:
     for (const node of this.nodes) {
       const docker = new DockerManager(node.connection!);
       await docker.detectSudoRequirement();
-      const result = await docker.execInContainer("garage", "garage node id");
+      const result = await docker.execInContainer("garage", "/garage node id");
       
       if (result.code !== 0) {
         throw new Error(`Failed to get node ID: ${result.stderr}`);
@@ -319,7 +319,7 @@ services:
     // Connect node1 to node2
     const docker1 = new DockerManager(this.nodes[0].connection!);
     await docker1.detectSudoRequirement();
-    const connectCmd = `garage node connect ${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`;
+    const connectCmd = `/garage node connect ${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`;
     
     const result = await docker1.execInContainer("garage", connectCmd);
     
@@ -333,7 +333,7 @@ services:
     await docker.detectSudoRequirement();
 
     // Assign node1 to zone1
-    const assign1Cmd = `garage layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
+    const assign1Cmd = `/garage layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
     const result1 = await docker.execInContainer("garage", assign1Cmd);
     
     if (result1.code !== 0) {
@@ -341,7 +341,7 @@ services:
     }
 
     // Assign node2 to zone2
-    const assign2Cmd = `garage layout assign -z zone2 -c ${this.config.capacityPerNode} ${nodeIds[1].substring(0, 8)}`;
+    const assign2Cmd = `/garage layout assign -z zone2 -c ${this.config.capacityPerNode} ${nodeIds[1].substring(0, 8)}`;
     const result2 = await docker.execInContainer("garage", assign2Cmd);
     
     if (result2.code !== 0) {
@@ -349,7 +349,7 @@ services:
     }
 
     // Get current layout version
-    const layoutShowResult = await docker.execInContainer("garage", "garage layout show");
+    const layoutShowResult = await docker.execInContainer("garage", "/garage layout show");
     
     if (layoutShowResult.code !== 0) {
       throw new Error(`Failed to get layout: ${layoutShowResult.stderr}`);
@@ -364,7 +364,7 @@ services:
     }
 
     // Apply layout with correct version
-    const applyCmd = `garage layout apply --version ${layoutVersion}`;
+    const applyCmd = `/garage layout apply --version ${layoutVersion}`;
     const result3 = await docker.execInContainer("garage", applyCmd);
     
     if (result3.code !== 0) {
@@ -375,7 +375,7 @@ services:
   private async getClusterStatus(): Promise<string> {
     const docker = new DockerManager(this.nodes[0].connection!);
     await docker.detectSudoRequirement();
-    const result = await docker.execInContainer("garage", "garage status");
+    const result = await docker.execInContainer("garage", "/garage status");
     
     if (result.code !== 0) {
       throw new Error(`Failed to get status: ${result.stderr}`);
