@@ -66,8 +66,15 @@ export class GarageCluster {
     const uid = uidResult.stdout.trim();
     const gid = gidResult.stdout.trim();
 
+    // Resolve hostname to IP for rpc_public_addr
+    const publicIP = await this.resolveToIP(node.host);
+    
+    if (publicIP !== node.host) {
+      console.log(dim(`  Resolved ${node.host} → ${publicIP}`));
+    }
+
     // Step 4: Generate config
-    const garageConfig = this.generateGarageConfig(node);
+    const garageConfig = this.generateGarageConfig(node, [], publicIP);
     
     // Create workdir as user (no sudo needed since it's in home directory)
     await node.connection!.exec(`mkdir -p ${workdir}`);
@@ -96,10 +103,44 @@ export class GarageCluster {
     }
   }
 
-  private generateGarageConfig(node: NodeConfig, bootstrapPeers: string[] = []): string {
+  private async resolveToIP(hostname: string): Promise<string> {
+    // If already an IP address, return as-is
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+    
+    if (ipv4Regex.test(hostname) || ipv6Regex.test(hostname)) {
+      return hostname;
+    }
+    
+    // Try to resolve hostname to IP
+    try {
+      const result = await Deno.resolveDns(hostname, "A");
+      if (result && result.length > 0) {
+        return result[0];
+      }
+    } catch {
+      // If DNS resolution fails, try IPv6
+      try {
+        const result = await Deno.resolveDns(hostname, "AAAA");
+        if (result && result.length > 0) {
+          return `[${result[0]}]`; // IPv6 needs brackets
+        }
+      } catch {
+        // If all fails, return hostname as-is and let it fail with a clear error
+        return hostname;
+      }
+    }
+    
+    return hostname;
+  }
+
+  private generateGarageConfig(node: NodeConfig, bootstrapPeers: string[] = [], publicAddr?: string): string {
     const peersConfig = bootstrapPeers.length > 0
       ? `bootstrap_peers = [\n  "${bootstrapPeers.join('",\n  "')}"\n]`
       : `bootstrap_peers = []`;
+    
+    // Use the resolved IP address if provided, otherwise fall back to hostname
+    const rpcPublicAddr = publicAddr || node.host;
       
     // Use container paths (Docker mounts host paths to these locations)
     return `
@@ -112,7 +153,7 @@ replication_factor = ${this.config.replicationFactor}
 compression_level = 2
 
 rpc_bind_addr = "[::]:${this.config.ports.rpc}"
-rpc_public_addr = "${node.host}:${this.config.ports.rpc}"
+rpc_public_addr = "${rpcPublicAddr}:${this.config.ports.rpc}"
 rpc_secret = "${this.config.rpcSecret}"
 
 # Bootstrap peers for automatic node discovery on restart
@@ -217,11 +258,15 @@ services:
   }
 
   private async updateBootstrapPeers(nodeIds: string[]): Promise<void> {
+    // Resolve node IPs
+    const node1IP = await this.resolveToIP(this.nodes[0].host);
+    const node2IP = await this.resolveToIP(this.nodes[1].host);
+    
     // Build bootstrap peers list
     // Format: "nodeId@host:port"
     const bootstrapPeers = [
-      `${nodeIds[0]}@${this.nodes[0].host}:${this.config.ports.rpc}`,
-      `${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`
+      `${nodeIds[0]}@${node1IP}:${this.config.ports.rpc}`,
+      `${nodeIds[1]}@${node2IP}:${this.config.ports.rpc}`
     ];
 
     const workdir = this.config.workdir;
@@ -229,11 +274,12 @@ services:
     // Update config on each node
     for (let i = 0; i < this.nodes.length; i++) {
       const node = this.nodes[i];
+      const publicIP = i === 0 ? node1IP : node2IP;
       const docker = new DockerManager(node.connection!);
       await docker.detectSudoRequirement();
 
-      // Generate new config with bootstrap peers
-      const garageConfig = this.generateGarageConfig(node, bootstrapPeers);
+      // Generate new config with bootstrap peers and resolved IP
+      const garageConfig = this.generateGarageConfig(node, bootstrapPeers, publicIP);
       
       // Write updated config
       await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
