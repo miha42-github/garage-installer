@@ -1739,6 +1739,7 @@ export class Wizard {
               "--endpoint-url", endpoint,
               "s3", "mb",
               `s3://${bucketName}`,
+              "--region", "garage",
             ],
             env: {
               AWS_ACCESS_KEY_ID: accessKey,
@@ -1799,6 +1800,7 @@ export class Wizard {
               "s3", "rb",
               `s3://${bucketName}`,
               "--force",
+              "--region", "garage",
             ],
             env: {
               AWS_ACCESS_KEY_ID: accessKey,
@@ -1857,6 +1859,7 @@ export class Wizard {
             "s3", "cp",
             localTestPath,
             `s3://${bucketName}/${testFile}`,
+            "--region", "garage",
           ],
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
@@ -1881,6 +1884,7 @@ export class Wizard {
             "s3", "cp",
             `s3://${bucketName}/${testFile}`,
             downloadPath,
+            "--region", "garage",
           ],
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
@@ -1914,6 +1918,7 @@ export class Wizard {
             "--endpoint-url", endpoint,
             "s3", "rm",
             `s3://${bucketName}/${testFile}`,
+            "--region", "garage",
           ],
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
