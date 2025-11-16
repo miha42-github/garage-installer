@@ -1455,107 +1455,22 @@ export class Wizard {
     });
 
     if (runTest) {
-      await this.runValidationTest();
+      // For post-install, we can auto-create credentials and test
+      await this.runPostInstallValidation();
     }
   }
 
-  async runValidation() {
-    // Initialize logging
-    const logger = initLogger();
-    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
-    await logger.info("=== Garage Validation Started ===");
-
-    console.log(bold("This will validate an existing Garage installation.\n"));
-
-    try {
-      // Try to load from config file first
-      const configFile = "garage-cluster-config.json";
-      let loadedFromConfig = false;
-      
-      try {
-        const configContent = await Deno.readTextFile(configFile);
-        const config = JSON.parse(configContent);
-        
-        console.log(green(`✓ Found ${configFile}`));
-        console.log(dim(`  Node 1: ${config.nodes[0].name} (${config.nodes[0].host})`));
-        console.log(dim(`  Node 2: ${config.nodes[1].name} (${config.nodes[1].host})\n`));
-        
-        const useConfig = await Confirm.prompt({
-          message: "Use configuration from file?",
-          default: true,
-        });
-        
-        if (useConfig) {
-          // Restore from config but prompt for passwords
-          this.node1 = {
-            name: config.nodes[0].name,
-            host: config.nodes[0].host,
-            port: 22,
-            username: Deno.env.get("USER") || "ubuntu",
-            authMethod: "key",
-            keyPath: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-          };
-          
-          this.node2 = {
-            name: config.nodes[1].name,
-            host: config.nodes[1].host,
-            port: 22,
-            username: Deno.env.get("USER") || "ubuntu",
-            authMethod: "key",
-            keyPath: `${Deno.env.get("HOME")}/.ssh/id_rsa`,
-          };
-          
-          // Only ask for username/auth if user wants to override
-          const customCreds = await Confirm.prompt({
-            message: "Use custom SSH credentials?",
-            default: false,
-          });
-          
-          if (customCreds) {
-            await this.collectNodeInfo();
-          } else {
-            // Just test connectivity with defaults
-            console.log(bold(cyan("\n=== Testing Connectivity ===")));
-            await this.testConnectivity();
-          }
-          
-          loadedFromConfig = true;
-        }
-      } catch {
-        // Config file doesn't exist or is invalid, prompt for info
-      }
-      
-      if (!loadedFromConfig) {
-        // Collect node information
-        console.log(bold(cyan("\n=== Connecting to Nodes ===")));
-        await this.collectNodeInfo();
-        await this.testConnectivity();
-      }
-
-      // Run validation test
-      await this.runValidationTest();
-
-      console.log(green(bold("\n✓ Validation complete!")));
-      await logger.info("Validation completed successfully");
-    } catch (error: any) {
-      await logger.error("Validation failed", { error: error.message, stack: error.stack });
-      console.error(red(bold("\n✖ Validation failed:")), error.message);
-      throw error;
-    } finally {
-      await this.closeConnections();
-    }
-  }
-
-  private async runValidationTest() {
-    console.log(bold(cyan("\n=== Running Validation Test ===")));
+  private async runPostInstallValidation() {
+    console.log(bold(cyan("\n=== Post-Install Validation ===")));
+    console.log(dim("Creating test credentials via SSH, then testing locally...\n"));
     
     try {
       const testBucket = "installer-test-bucket";
       const testKey = "installer-test-key";
-      const testFile = "test.html";
-      const testContent = "<html><body><h1>Garage Test - Success!</h1></body></html>";
+      let accessKey = "";
+      let secretKey = "";
       
-      // Step 1: Create bucket
+      // Step 1: Create bucket via SSH
       await withSpinner("Creating test bucket", async () => {
         const result = await this.node1!.connection!.exec(
           `docker exec garage /garage bucket create ${testBucket}`
@@ -1565,10 +1480,7 @@ export class Wizard {
         }
       });
       
-      // Step 2: Create key
-      let accessKey = "";
-      let secretKey = "";
-      
+      // Step 2: Create key via SSH
       await withSpinner("Creating test access key", async () => {
         const result = await this.node1!.connection!.exec(
           `docker exec garage /garage key create ${testKey}`
@@ -1595,7 +1507,7 @@ export class Wizard {
         }
       });
       
-      // Step 3: Grant permissions
+      // Step 3: Grant permissions via SSH
       await withSpinner("Granting bucket permissions", async () => {
         const result = await this.node1!.connection!.exec(
           `docker exec garage /garage bucket allow ${testBucket} --read --write --key ${testKey}`
@@ -1605,104 +1517,14 @@ export class Wizard {
         }
       });
       
-      // Step 4: Upload test file from local machine
-      console.log(dim(`\n  Access Key: ${accessKey}`));
-      console.log(dim(`  Secret Key: ${secretKey.substring(0, 10)}...`));
-      console.log(dim(`  Endpoint: http://${this.node1!.host}:3900\n`));
+      // Step 4: Test from local machine
+      const endpoint = `http://${this.node1!.host}:${this.clusterConfig!.ports.s3Api}`;
+      console.log(dim(`\n  Testing endpoint: ${endpoint}`));
+      console.log(dim(`  Using bucket: ${testBucket}\n`));
       
-      await withSpinner("Uploading test file (external test)", async () => {
-        // Create local test file
-        const localTestPath = `/tmp/${testFile}`;
-        await Deno.writeTextFile(localTestPath, testContent);
-        
-        // Try to use AWS CLI if available locally
-        const awsCheck = await Deno.run({
-          cmd: ["which", "aws"],
-          stdout: "null",
-          stderr: "null",
-        }).status();
-        
-        if (awsCheck.success) {
-          // Use AWS CLI from local machine
-          const uploadCmd = Deno.run({
-            cmd: [
-              "aws",
-              "--endpoint-url", `http://${this.node1!.host}:3900`,
-              "s3", "cp",
-              localTestPath,
-              `s3://${testBucket}/${testFile}`
-            ],
-            env: {
-              AWS_ACCESS_KEY_ID: accessKey,
-              AWS_SECRET_ACCESS_KEY: secretKey,
-            },
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const status = await uploadCmd.status();
-          if (!status.success) {
-            const stderr = new TextDecoder().decode(await uploadCmd.stderrOutput());
-            throw new Error(`Upload failed: ${stderr}`);
-          }
-          uploadCmd.close();
-        } else {
-          // Use curl from local machine
-          console.log(yellow("  AWS CLI not available locally, using curl"));
-          
-          const curlCmd = Deno.run({
-            cmd: [
-              "curl",
-              "-X", "PUT",
-              "-H", `Host: ${testBucket}.s3.garage`,
-              "-H", "Content-Type: text/html",
-              "--data-binary", `@${localTestPath}`,
-              `http://${this.node1!.host}:3900/${testFile}`
-            ],
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const status = await curlCmd.status();
-          const stdout = new TextDecoder().decode(await curlCmd.stdoutOutput());
-          curlCmd.close();
-          
-          if (!status.success || stdout.includes("Error")) {
-            throw new Error(`Upload failed: ${stdout}`);
-          }
-        }
-        
-        // Cleanup local test file
-        await Deno.remove(localTestPath);
-      });
+      await this.runValidationTest(endpoint, accessKey, secretKey, testBucket);
       
-      // Step 5: Verify download from local machine
-      await withSpinner("Verifying file retrieval (external test)", async () => {
-        const curlCmd = Deno.run({
-          cmd: [
-            "curl",
-            "-s",
-            "-H", `Host: ${testBucket}.s3.garage`,
-            `http://${this.node1!.host}:3900/${testFile}`
-          ],
-          stdout: "piped",
-          stderr: "piped",
-        });
-        
-        const status = await curlCmd.status();
-        const stdout = new TextDecoder().decode(await curlCmd.stdoutOutput());
-        curlCmd.close();
-        
-        if (!status.success) {
-          throw new Error("Download failed");
-        }
-        
-        if (!stdout.includes("Garage Test")) {
-          throw new Error(`Downloaded content doesn't match. Got: ${stdout.substring(0, 100)}`);
-        }
-      });
-      
-      // Step 6: Cleanup test resources
+      // Step 5: Cleanup via SSH
       await withSpinner("Cleaning up test resources", async () => {
         await this.node1!.connection!.exec(
           `docker exec garage /garage bucket delete ${testBucket} --yes 2>/dev/null || true`
@@ -1712,19 +1534,297 @@ export class Wizard {
         );
       });
       
-      console.log(green(bold("\n✓ Validation test passed!")));
-      console.log(dim("  • Bucket creation: ✓"));
-      console.log(dim("  • Access key creation: ✓"));
+    } catch (error: any) {
+      console.log(red(bold("\n✖ Post-install validation failed")));
+      console.log(yellow("\nNote: The cluster may still be functional. You can test manually later."));
+      console.log(dim(`\nError: ${error.message}`));
+    }
+  }
+
+  async runValidation() {
+    // Initialize logging
+    const logger = initLogger();
+    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
+    await logger.info("=== Garage Validation Started ===");
+
+    console.log(bold("This will validate an existing Garage installation.\n"));
+    console.log(dim("This validation runs completely from your local machine."));
+    console.log(dim("No SSH connection is required - just S3 API access.\n"));
+
+    try {
+      // Try to load endpoint from config file first
+      const configFile = "garage-cluster-config.json";
+      let endpoint = "";
+      
+      try {
+        const configContent = await Deno.readTextFile(configFile);
+        const config = JSON.parse(configContent);
+        
+        console.log(green(`✓ Found ${configFile}`));
+        
+        // Get S3 API port from config (default to 3900)
+        const s3Port = config.cluster?.ports?.s3Api || 3900;
+        const nodeHost = config.nodes[0].host;
+        endpoint = `http://${nodeHost}:${s3Port}`;
+        
+        console.log(dim(`  S3 Endpoint: ${endpoint}\n`));
+        
+        const useConfig = await Confirm.prompt({
+          message: "Use endpoint from config file?",
+          default: true,
+        });
+        
+        if (!useConfig) {
+          endpoint = "";
+        }
+      } catch {
+        // Config file doesn't exist or is invalid
+      }
+      
+      // Prompt for endpoint if not loaded from config
+      if (!endpoint) {
+        const host = await Input.prompt({
+          message: "Garage S3 API hostname or IP:",
+          validate: (value) => {
+            if (!value) return "Hostname is required";
+            return true;
+          },
+        });
+        
+        const port = await NumberPrompt.prompt({
+          message: "S3 API port:",
+          default: 3900,
+          min: 1,
+          max: 65535,
+        });
+        
+        endpoint = `http://${host}:${port}`;
+      }
+      
+      // Prompt for S3 credentials
+      console.log(bold(cyan("\n=== S3 Credentials ===")));
+      console.log(dim("Enter your Garage S3 access credentials:"));
+      console.log(dim("(These should have read/write access to a test bucket)\n"));
+      
+      const accessKey = await Input.prompt({
+        message: "Access Key ID:",
+        validate: (value) => {
+          if (!value) return "Access key is required";
+          return true;
+        },
+      });
+      
+      const secretKey = await Secret.prompt({
+        message: "Secret Access Key:",
+        validate: (value) => {
+          if (!value) return "Secret key is required";
+          return true;
+        },
+      });
+      
+      const bucketName = await Input.prompt({
+        message: "Test bucket name:",
+        default: "installer-test-bucket",
+        hint: "Must exist and be writable",
+      });
+
+      // Run validation test
+      await this.runValidationTest(endpoint, accessKey, secretKey, bucketName);
+
+      console.log(green(bold("\n✓ Validation complete!")));
+      console.log(dim("\nYour Garage S3 API is accessible and working correctly."));
+      await logger.info("Validation completed successfully");
+    } catch (error: any) {
+      await logger.error("Validation failed", { error: error.message, stack: error.stack });
+      console.error(red(bold("\n✖ Validation failed:")), error.message);
+      throw error;
+    }
+  }
+
+  private async runValidationTest(endpoint: string, accessKey: string, secretKey: string, bucketName: string) {
+    console.log(bold(cyan("\n=== Running Validation Test ===")));
+    console.log(dim("Testing S3 API from your local machine...\n"));
+    
+    try {
+      const testFile = "installer-test.html";
+      const testContent = "<html><body><h1>Garage Test - Success!</h1></body></html>";
+      const localTestPath = `/tmp/${testFile}`;
+      
+      // Step 1: Create local test file
+      await withSpinner("Creating test file", async () => {
+        await Deno.writeTextFile(localTestPath, testContent);
+      });
+      
+      // Step 2: Check for AWS CLI
+      let useAwsCli = false;
+      await withSpinner("Checking for AWS CLI", async () => {
+        try {
+          const awsCheck = new Deno.Command("which", {
+            args: ["aws"],
+            stdout: "null",
+            stderr: "null",
+          });
+          const { success } = await awsCheck.output();
+          useAwsCli = success;
+        } catch {
+          useAwsCli = false;
+        }
+      });
+      
+      if (!useAwsCli) {
+        console.log(yellow("\n  ℹ AWS CLI not found - using curl (basic S3 testing)"));
+        console.log(dim("  For full S3 compatibility testing, install AWS CLI:\n"));
+        console.log(dim("    brew install awscli"));
+        console.log(dim("    # or"));
+        console.log(dim("    pip install awscli\n"));
+      }
+      
+      // Step 3: Upload test file
+      await withSpinner("Uploading test file to S3", async () => {
+        if (useAwsCli) {
+          // Use AWS CLI for proper S3 upload
+          const uploadCmd = new Deno.Command("aws", {
+            args: [
+              "--endpoint-url", endpoint,
+              "s3", "cp",
+              localTestPath,
+              `s3://${bucketName}/${testFile}`,
+            ],
+            env: {
+              AWS_ACCESS_KEY_ID: accessKey,
+              AWS_SECRET_ACCESS_KEY: secretKey,
+            },
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stderr } = await uploadCmd.output();
+          if (!success) {
+            const errorMsg = new TextDecoder().decode(stderr);
+            throw new Error(`Upload failed: ${errorMsg}`);
+          }
+        } else {
+          // Use curl for basic PUT
+          const curlCmd = new Deno.Command("curl", {
+            args: [
+              "-f", "-s",
+              "-X", "PUT",
+              "-H", `Host: ${bucketName}.s3.garage`,
+              "-H", "Content-Type: text/html",
+              "--data-binary", `@${localTestPath}`,
+              `${endpoint}/${testFile}`,
+            ],
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stdout, stderr } = await curlCmd.output();
+          if (!success) {
+            const errorMsg = new TextDecoder().decode(stderr) || new TextDecoder().decode(stdout);
+            throw new Error(`Upload failed: ${errorMsg}`);
+          }
+        }
+      });
+      
+      // Step 4: Download and verify
+      await withSpinner("Downloading and verifying file", async () => {
+        if (useAwsCli) {
+          // Use AWS CLI for proper S3 download
+          const downloadPath = `/tmp/downloaded-${testFile}`;
+          const downloadCmd = new Deno.Command("aws", {
+            args: [
+              "--endpoint-url", endpoint,
+              "s3", "cp",
+              `s3://${bucketName}/${testFile}`,
+              downloadPath,
+            ],
+            env: {
+              AWS_ACCESS_KEY_ID: accessKey,
+              AWS_SECRET_ACCESS_KEY: secretKey,
+            },
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stderr } = await downloadCmd.output();
+          if (!success) {
+            const errorMsg = new TextDecoder().decode(stderr);
+            throw new Error(`Download failed: ${errorMsg}`);
+          }
+          
+          // Verify content
+          const downloaded = await Deno.readTextFile(downloadPath);
+          if (downloaded !== testContent) {
+            throw new Error("Downloaded content doesn't match uploaded content");
+          }
+          
+          // Cleanup downloaded file
+          await Deno.remove(downloadPath);
+        } else {
+          // Use curl for basic GET
+          const curlCmd = new Deno.Command("curl", {
+            args: [
+              "-f", "-s",
+              "-H", `Host: ${bucketName}.s3.garage`,
+              `${endpoint}/${testFile}`,
+            ],
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stdout, stderr } = await curlCmd.output();
+          if (!success) {
+            const errorMsg = new TextDecoder().decode(stderr);
+            throw new Error(`Download failed: ${errorMsg}`);
+          }
+          
+          const downloaded = new TextDecoder().decode(stdout);
+          if (!downloaded.includes("Garage Test")) {
+            throw new Error(`Downloaded content doesn't match. Got: ${downloaded.substring(0, 100)}`);
+          }
+        }
+      });
+      
+      // Step 5: Cleanup test file
+      await withSpinner("Cleaning up", async () => {
+        await Deno.remove(localTestPath);
+        
+        // Optionally delete test file from S3
+        if (useAwsCli) {
+          const deleteCmd = new Deno.Command("aws", {
+            args: [
+              "--endpoint-url", endpoint,
+              "s3", "rm",
+              `s3://${bucketName}/${testFile}`,
+            ],
+            env: {
+              AWS_ACCESS_KEY_ID: accessKey,
+              AWS_SECRET_ACCESS_KEY: secretKey,
+            },
+            stdout: "null",
+            stderr: "null",
+          });
+          await deleteCmd.output();
+        }
+      });
+      
+      console.log(green(bold("\n✓ All tests passed!")));
+      console.log(dim("\n  Test Results:"));
+      console.log(dim("  • S3 endpoint accessible: ✓"));
+      console.log(dim("  • Authentication working: ✓"));
       console.log(dim("  • File upload: ✓"));
-      console.log(dim("  • File retrieval: ✓"));
+      console.log(dim("  • File download: ✓"));
+      console.log(dim("  • Content verification: ✓"));
       
     } catch (error: any) {
       console.log(red(bold("\n✖ Validation test failed")));
-      console.log(yellow("\nNote: The cluster may still be functional. Common issues:"));
-      console.log(dim("  • Cluster still initializing (wait a moment and check manually)"));
-      console.log(dim("  • Network configuration issues"));
-      console.log(dim("  • AWS CLI not installed (install for better S3 compatibility testing)"));
-      console.log(dim(`\nError details: ${error.message}`));
+      console.log(yellow("\nPossible issues:"));
+      console.log(dim("  • Endpoint not reachable from this machine"));
+      console.log(dim("  • Invalid credentials"));
+      console.log(dim("  • Bucket doesn't exist or lacks write permissions"));
+      console.log(dim("  • Network/firewall blocking access"));
+      console.log(dim(`\nError: ${error.message}`));
+      throw error;
     }
   }
 
