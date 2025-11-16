@@ -1543,6 +1543,16 @@ export class Wizard {
     console.log(bold(cyan("\n=== Post-Install Validation ===")));
     console.log(dim("Creating test credentials via SSH, then testing locally...\n"));
     
+    // Create temporary AWS config for path-style addressing
+    const tempDir = `/tmp/garage-installer-${Date.now()}`;
+    await Deno.mkdir(tempDir, { recursive: true });
+    const awsConfigContent = `[default]
+region = garage
+s3 =
+    addressing_style = path
+`;
+    await Deno.writeTextFile(`${tempDir}/config`, awsConfigContent);
+    
     try {
       const testBucket = "installer-test-bucket";
       const testKey = "installer-test-key";
@@ -1559,7 +1569,7 @@ export class Wizard {
         }
       });
       
-      // Step 2: Create key via SSH
+      // Step 2: Create key via SSH and extract credentials immediately
       await withSpinner("Creating test access key", async () => {
         const result = await this.node1!.connection!.exec(
           `docker exec garage /garage key create ${testKey}`
@@ -1569,20 +1579,20 @@ export class Wizard {
           throw new Error(`Failed to create key: ${result.stderr}`);
         }
         
-        // Parse key info
-        const infoResult = await this.node1!.connection!.exec(
-          `docker exec garage /garage key info ${testKey}`
-        );
-        
-        // Extract credentials from output - more flexible regex
-        const accessKeyMatch = infoResult.stdout.match(/Key ID:\s+(\S+)/i);
-        const secretKeyMatch = infoResult.stdout.match(/Secret key:\s+(\S+)/i);
+        // Extract credentials from CREATE output (not INFO - it redacts the secret!)
+        const accessKeyMatch = result.stdout.match(/Key ID:\s+(\S+)/i);
+        const secretKeyMatch = result.stdout.match(/Secret key:\s+(\S+)/i);
         
         if (accessKeyMatch) accessKey = accessKeyMatch[1].trim();
         if (secretKeyMatch) secretKey = secretKeyMatch[1].trim();
         
         if (!accessKey || !secretKey) {
-          throw new Error(`Failed to extract credentials. Output: ${infoResult.stdout.substring(0, 200)}`);
+          console.log(red("\n📋 Full garage key create output:"));
+          console.log(result.stdout);
+          console.log(red("\n🔍 Extraction results:"));
+          console.log(`  Access Key Match: ${accessKeyMatch ? accessKeyMatch[1] : 'NOT FOUND'}`);
+          console.log(`  Secret Key Match: ${secretKeyMatch ? secretKeyMatch[1] : 'NOT FOUND'}`);
+          throw new Error(`Failed to extract credentials from key creation. Output: ${result.stdout.substring(0, 200)}`);
         }
       });
       
@@ -1604,7 +1614,7 @@ export class Wizard {
       console.log(dim(`\n  Testing endpoint: ${endpoint}`));
       console.log(dim(`  Using bucket: ${testBucket}\n`));
       
-      await this.runValidationTest(endpoint, accessKey, secretKey, testBucket);
+      await this.runValidationTest(endpoint, accessKey, secretKey, testBucket, tempDir);
       
       // Step 5: Cleanup via SSH
       await withSpinner("Cleaning up test resources", async () => {
@@ -1620,6 +1630,13 @@ export class Wizard {
       console.log(red(bold("\n✖ Post-install validation failed")));
       console.log(yellow("\nNote: The cluster may still be functional. You can test manually later."));
       console.log(dim(`\nError: ${error.message}`));
+    } finally {
+      // Cleanup temp config
+      try {
+        await Deno.remove(tempDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
     }
   }
 
@@ -1632,6 +1649,16 @@ export class Wizard {
     console.log(bold("This will validate an existing Garage installation.\n"));
     console.log(dim("This validation runs completely from your local machine."));
     console.log(dim("Requires AWS CLI to be installed.\n"));
+
+    // Create temporary AWS config for path-style addressing
+    const tempDir = `/tmp/garage-installer-${Date.now()}`;
+    await Deno.mkdir(tempDir, { recursive: true });
+    const awsConfigContent = `[default]
+region = garage
+s3 =
+    addressing_style = path
+`;
+    await Deno.writeTextFile(`${tempDir}/config`, awsConfigContent);
 
     try {
       // Check for AWS CLI
@@ -1813,13 +1840,10 @@ export class Wizard {
             args: [
               "-s", "-w", "\\nHTTP_CODE:%{http_code}",
               "-X", "POST",
-              `${adminEndpoint}/v1/key/import`,
+              `${adminEndpoint}/v1/key?id=${accessKey}`,
               "-H", "Content-Type: application/json",
               "-H", `Authorization: Bearer ${adminToken}`,
               "-d", JSON.stringify({
-                accessKeyId: accessKey,
-                secretAccessKey: secretKey,
-                name: keyName,
                 allow: {
                   createBucket: true
                 }
@@ -1858,6 +1882,7 @@ export class Wizard {
               AWS_ACCESS_KEY_ID: accessKey,
               AWS_SECRET_ACCESS_KEY: secretKey,
               AWS_EC2_METADATA_DISABLED: "true",
+              AWS_CONFIG_FILE: `${tempDir}/config`,
             },
             stdout: "piped",
             stderr: "piped",
@@ -1902,7 +1927,7 @@ export class Wizard {
       }
 
       // Run validation test
-      await this.runValidationTest(endpoint, accessKey, secretKey, bucketName);
+      await this.runValidationTest(endpoint, accessKey, secretKey, bucketName, tempDir);
 
       // Cleanup created resources
       if (createdResources) {
@@ -1920,6 +1945,7 @@ export class Wizard {
               AWS_ACCESS_KEY_ID: accessKey,
               AWS_SECRET_ACCESS_KEY: secretKey,
               AWS_EC2_METADATA_DISABLED: "true",
+              AWS_CONFIG_FILE: `${tempDir}/config`,
             },
             stdout: "null",
             stderr: "null",
@@ -1948,10 +1974,17 @@ export class Wizard {
       await logger.error("Validation failed", { error: error.message, stack: error.stack });
       console.error(red(bold("\n✖ Validation failed:")), error.message);
       throw error;
+    } finally {
+      // Cleanup temp config
+      try {
+        await Deno.remove(tempDir, { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
     }
   }
 
-  private async runValidationTest(endpoint: string, accessKey: string, secretKey: string, bucketName: string) {
+  private async runValidationTest(endpoint: string, accessKey: string, secretKey: string, bucketName: string, tempDir: string) {
     console.log(bold(cyan("\n=== Running Validation Test ===")));
     console.log(dim("Testing S3 API from your local machine using AWS CLI...\n"));
     
@@ -1970,24 +2003,31 @@ export class Wizard {
       await withSpinner("Uploading test file to S3", async () => {
         const uploadCmd = new Deno.Command("aws", {
           args: [
-            "--endpoint-url", endpoint,
             "s3", "cp",
             localTestPath,
             `s3://${bucketName}/${testFile}`,
+            "--endpoint-url", endpoint,
             "--region", "garage",
           ],
           env: {
             AWS_ACCESS_KEY_ID: accessKey,
             AWS_SECRET_ACCESS_KEY: secretKey,
             AWS_EC2_METADATA_DISABLED: "true",
+            AWS_CONFIG_FILE: `${tempDir}/config`,
           },
           stdout: "piped",
           stderr: "piped",
         });
         
-        const { success, stderr } = await uploadCmd.output();
+        const { success, stderr, stdout } = await uploadCmd.output();
         if (!success) {
           const errorMsg = new TextDecoder().decode(stderr);
+          console.log(red(`\nAWS CLI Error Details:`));
+          console.log(dim(`Command: aws s3 cp ${localTestPath} s3://${bucketName}/${testFile}`));
+          console.log(dim(`Endpoint: ${endpoint}`));
+          console.log(dim(`Region: garage`));
+          console.log(dim(`Access Key: ${accessKey}`));
+          console.log(dim(`Error: ${errorMsg}`));
           throw new Error(`Upload failed: ${errorMsg}`);
         }
       });
@@ -2006,6 +2046,7 @@ export class Wizard {
             AWS_ACCESS_KEY_ID: accessKey,
             AWS_SECRET_ACCESS_KEY: secretKey,
             AWS_EC2_METADATA_DISABLED: "true",
+            AWS_CONFIG_FILE: `${tempDir}/config`,
           },
           stdout: "piped",
           stderr: "piped",
@@ -2041,6 +2082,7 @@ export class Wizard {
             AWS_ACCESS_KEY_ID: accessKey,
             AWS_SECRET_ACCESS_KEY: secretKey,
             AWS_EC2_METADATA_DISABLED: "true",
+            AWS_CONFIG_FILE: `${tempDir}/config`,
           },
           stdout: "null",
           stderr: "null",
