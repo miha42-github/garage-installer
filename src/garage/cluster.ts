@@ -127,8 +127,6 @@ api_bind_addr = "[::]:${this.config.ports.admin}"
 
   private generateDockerCompose(node: NodeConfig, uid: string, gid: string): string {
     return `
-version: '3.8'
-
 services:
   garage:
     image: dxflrs/garage:${this.config.garageVersion}
@@ -142,7 +140,7 @@ services:
       - ${this.config.dataDir}:/var/lib/garage/data
     environment:
       - RUST_LOG=garage=info
-    command: server
+    command: ["/garage", "server"]
 `.trim();
   }
 
