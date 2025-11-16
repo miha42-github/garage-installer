@@ -1616,6 +1616,9 @@ s3 =
       
       await this.runValidationTest(endpoint, accessKey, secretKey, testBucket, tempDir);
       
+      // Show AWS CLI setup instructions
+      this.showAWSCLISetup(endpoint);
+      
       // Step 5: Cleanup via SSH
       await withSpinner("Cleaning up test resources", async () => {
         await this.node1!.connection!.exec(
@@ -1969,6 +1972,10 @@ s3 =
 
       console.log(green(bold("\n✓ Validation complete!")));
       console.log(dim("\nYour Garage S3 API is accessible and working correctly."));
+      
+      // Show AWS CLI configuration helper
+      this.showAWSCLISetup(endpoint);
+      
       await logger.info("Validation completed successfully");
     } catch (error: any) {
       await logger.error("Validation failed", { error: error.message, stack: error.stack });
@@ -2143,6 +2150,41 @@ s3 =
     
     console.log("\n" + bold("Documentation:"));
     console.log("  https://garagehq.deuxfleurs.fr/documentation/");
+    console.log("\n");
+  }
+
+  private showAWSCLISetup(endpoint: string) {
+    console.log("\n" + "═".repeat(60));
+    console.log(bold(cyan("AWS CLI Configuration")));
+    console.log("═".repeat(60));
+    
+    console.log("\n" + bold("Quick Setup:"));
+    console.log(dim("\n  1. Configure credentials in ~/.aws/credentials:"));
+    console.log(dim("     [default]"));
+    console.log(dim("     aws_access_key_id = YOUR_ACCESS_KEY"));
+    console.log(dim("     aws_secret_access_key = YOUR_SECRET_KEY"));
+    
+    console.log(dim("\n  2. Configure endpoint and region in ~/.aws/config:"));
+    console.log(dim("     [default]"));
+    console.log(dim(`     region = garage`));
+    console.log(dim(`     endpoint_url = ${endpoint}`));
+    console.log(dim("     "));
+    console.log(dim("     [profile default]"));
+    console.log(dim("     s3 ="));
+    console.log(dim("         addressing_style = path"));
+    
+    console.log(dim("\n  3. Or use this one-liner to configure path-style:"));
+    console.log(dim("     aws configure set default.s3.addressing_style path"));
+    
+    console.log("\n" + bold("Usage Examples:"));
+    console.log(dim("  aws s3 ls                              # List buckets"));
+    console.log(dim("  aws s3 mb s3://my-bucket               # Create bucket"));
+    console.log(dim("  aws s3 cp file.txt s3://my-bucket/     # Upload file"));
+    console.log(dim("  aws s3 sync ./folder s3://my-bucket/   # Sync directory"));
+    
+    console.log("\n" + bold("📚 Full Guide:"));
+    console.log(dim("  See docs/aws-cli-configuration.md for complete setup"));
+    console.log(dim("  instructions, troubleshooting, and advanced usage."));
     console.log("\n");
   }
 
