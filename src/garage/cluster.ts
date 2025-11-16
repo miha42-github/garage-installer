@@ -68,12 +68,32 @@ export class GarageCluster {
 
     // Resolve hostname to IP for rpc_public_addr
     console.log(dim(`  Resolving ${node.host}...`));
-    const publicIP = await this.resolveToIP(node.host);
     
-    if (publicIP !== node.host) {
-      console.log(green(`  ✓ Resolved ${node.host} → ${publicIP}`));
+    // Get the actual IP from the SSH connection or resolve it on the remote host
+    let publicIP = node.host;
+    
+    // First check if it's already an IP
+    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+    
+    if (!ipv4Regex.test(node.host) && !ipv6Regex.test(node.host)) {
+      // Not an IP, need to resolve on the remote host itself
+      const resolveResult = await node.connection!.exec(`hostname -I | awk '{print $1}'`);
+      if (resolveResult.code === 0 && resolveResult.stdout.trim()) {
+        publicIP = resolveResult.stdout.trim();
+        console.log(green(`  ✓ Resolved ${node.host} → ${publicIP} (via remote hostname -I)`));
+      } else {
+        // Try getent as fallback
+        const getentResult = await node.connection!.exec(`getent hosts ${node.host} | awk '{print $1}' | head -1`);
+        if (getentResult.code === 0 && getentResult.stdout.trim()) {
+          publicIP = getentResult.stdout.trim();
+          console.log(green(`  ✓ Resolved ${node.host} → ${publicIP} (via remote getent)`));
+        } else {
+          console.log(yellow(`  ⚠ Could not resolve ${node.host}, using as-is (may cause issues)`));
+        }
+      }
     } else {
-      console.log(dim(`  Using ${node.host} as-is (already an IP or resolution failed)`));
+      console.log(dim(`  Using ${node.host} as-is (already an IP)`));
     }
 
     // Step 4: Generate config
@@ -110,37 +130,6 @@ export class GarageCluster {
       const logs = await docker.getContainerLogs("garage");
       throw new Error(`Container failed to start. Logs:\n${logs}`);
     }
-  }
-
-  private async resolveToIP(hostname: string): Promise<string> {
-    // If already an IP address, return as-is
-    const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-    const ipv6Regex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
-    
-    if (ipv4Regex.test(hostname) || ipv6Regex.test(hostname)) {
-      return hostname;
-    }
-    
-    // Try to resolve hostname to IP
-    try {
-      const result = await Deno.resolveDns(hostname, "A");
-      if (result && result.length > 0) {
-        return result[0];
-      }
-    } catch {
-      // If DNS resolution fails, try IPv6
-      try {
-        const result = await Deno.resolveDns(hostname, "AAAA");
-        if (result && result.length > 0) {
-          return `[${result[0]}]`; // IPv6 needs brackets
-        }
-      } catch {
-        // If all fails, return hostname as-is and let it fail with a clear error
-        return hostname;
-      }
-    }
-    
-    return hostname;
   }
 
   private generateGarageConfig(node: NodeConfig, bootstrapPeers: string[] = [], publicAddr?: string): string {
@@ -267,9 +256,14 @@ services:
   }
 
   private async updateBootstrapPeers(nodeIds: string[]): Promise<void> {
-    // Resolve node IPs
-    const node1IP = await this.resolveToIP(this.nodes[0].host);
-    const node2IP = await this.resolveToIP(this.nodes[1].host);
+    // Get actual IPs from the remote hosts
+    const node1Result = await this.nodes[0].connection!.exec(`hostname -I | awk '{print $1}'`);
+    const node2Result = await this.nodes[1].connection!.exec(`hostname -I | awk '{print $1}'`);
+    
+    const node1IP = node1Result.stdout.trim() || this.nodes[0].host;
+    const node2IP = node2Result.stdout.trim() || this.nodes[1].host;
+    
+    console.log(dim(`  Using IPs: ${node1IP}, ${node2IP}`));
     
     // Build bootstrap peers list
     // Format: "nodeId@host:port"
