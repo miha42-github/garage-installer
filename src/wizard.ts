@@ -1646,13 +1646,23 @@ export class Wizard {
       
       // Ask if user wants to create new credentials or use existing
       console.log(bold(cyan("\n=== Validation Mode ===")));
+      
+      // Check if we have admin token for credential creation
+      if (!adminToken) {
+        console.log(yellow("\n⚠ Note: Admin API token not available"));
+        console.log(dim("  Cannot automatically create test credentials."));
+        console.log(dim("  You'll need to provide existing S3 credentials.\n"));
+      }
+      
       const mode = await Select.prompt({
         message: "Choose validation mode:",
-        options: [
+        options: adminToken ? [
           { name: "Create new test credentials (recommended)", value: "create" },
           { name: "Use existing credentials", value: "existing" },
+        ] : [
+          { name: "Use existing credentials", value: "existing" },
         ],
-        default: "create",
+        default: adminToken ? "create" : "existing",
       });
 
       let accessKey = "";
