@@ -142,9 +142,18 @@ export class DockerManager {
     
     while (Date.now() - startTime < timeoutSeconds * 1000) {
       try {
-        const result = await this.execInContainer(container, "garage status");
-        if (result.code === 0) {
-          return true;
+        // Check if container is running
+        const result = await this.dockerExec(`docker ps --filter name=${container} --filter status=running --format '{{.Names}}'`);
+        
+        if (result.code === 0 && result.stdout.trim() === container) {
+          // Container is running, wait a bit more to ensure it's stable
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Check if it's still running
+          const recheck = await this.dockerExec(`docker ps --filter name=${container} --filter status=running --format '{{.Names}}'`);
+          if (recheck.code === 0 && recheck.stdout.trim() === container) {
+            return true;
+          }
         }
       } catch {
         // Container not ready yet
