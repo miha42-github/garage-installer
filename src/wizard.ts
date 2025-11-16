@@ -1574,6 +1574,7 @@ export class Wizard {
       const configFile = "garage-cluster-config.json";
       let endpoint = "";
       let adminEndpoint = "";
+      let adminToken = "";
       
       try {
         const configContent = await Deno.readTextFile(configFile);
@@ -1587,6 +1588,7 @@ export class Wizard {
         const nodeHost = config.nodes[0].host;
         endpoint = `http://${nodeHost}:${s3Port}`;
         adminEndpoint = `http://${nodeHost}:${adminPort}`;
+        adminToken = config.cluster?.rpcSecret || "";
         
         console.log(dim(`  S3 API: ${endpoint}`));
         console.log(dim(`  Admin API: ${adminEndpoint}\n`));
@@ -1599,6 +1601,7 @@ export class Wizard {
         if (!useConfig) {
           endpoint = "";
           adminEndpoint = "";
+          adminToken = "";
         }
       } catch {
         // Config file doesn't exist or is invalid
@@ -1630,6 +1633,15 @@ export class Wizard {
         
         endpoint = `http://${host}:${s3Port}`;
         adminEndpoint = `http://${host}:${adminPort}`;
+        
+        // Prompt for admin token
+        adminToken = await Secret.prompt({
+          message: "Admin API token (RPC secret):",
+          validate: (value: string) => {
+            if (!value) return "Admin token is required to create credentials";
+            return true;
+          },
+        });
       }
       
       // Ask if user wants to create new credentials or use existing
@@ -1663,6 +1675,7 @@ export class Wizard {
               "-X", "POST",
               `${adminEndpoint}/v1/key`,
               "-H", "Content-Type: application/json",
+              "-H", `Authorization: Bearer ${adminToken}`,
               "-d", JSON.stringify({ name: keyName }),
             ],
             stdout: "piped",
@@ -1785,6 +1798,7 @@ export class Wizard {
               "-s",
               "-X", "DELETE",
               `${adminEndpoint}/v1/key?id=${accessKey}`,
+              "-H", `Authorization: Bearer ${adminToken}`,
             ],
             stdout: "null",
             stderr: "null",
