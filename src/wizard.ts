@@ -1499,22 +1499,25 @@ export class Wizard {
           `docker exec garage /garage key info ${testKey}`
         );
         
-        // Extract credentials from output
-        const accessKeyMatch = infoResult.stdout.match(/Key ID:\s+(\S+)/);
-        const secretKeyMatch = infoResult.stdout.match(/Secret key:\s+(\S+)/);
+        // Extract credentials from output - more flexible regex
+        const accessKeyMatch = infoResult.stdout.match(/Key ID:\s+(\S+)/i);
+        const secretKeyMatch = infoResult.stdout.match(/Secret key:\s+(\S+)/i);
         
-        if (accessKeyMatch) accessKey = accessKeyMatch[1];
-        if (secretKeyMatch) secretKey = secretKeyMatch[1];
+        if (accessKeyMatch) accessKey = accessKeyMatch[1].trim();
+        if (secretKeyMatch) secretKey = secretKeyMatch[1].trim();
         
         if (!accessKey || !secretKey) {
-          throw new Error("Failed to extract credentials from key info");
+          throw new Error(`Failed to extract credentials. Output: ${infoResult.stdout.substring(0, 200)}`);
         }
       });
+      
+      console.log(dim(`\n  Access Key: ${accessKey}`));
+      console.log(dim(`  Secret Key: ${secretKey.substring(0, 16)}...\n`));
       
       // Step 3: Grant permissions via SSH
       await withSpinner("Granting bucket permissions", async () => {
         const result = await this.node1!.connection!.exec(
-          `docker exec garage /garage bucket allow ${testBucket} --read --write --key ${testKey}`
+          `docker exec garage /garage bucket allow ${testBucket} --read --write --key ${accessKey}`
         );
         if (result.code !== 0) {
           throw new Error(`Failed to grant permissions: ${result.stderr}`);
