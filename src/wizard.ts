@@ -1549,12 +1549,31 @@ export class Wizard {
 
     console.log(bold("This will validate an existing Garage installation.\n"));
     console.log(dim("This validation runs completely from your local machine."));
-    console.log(dim("No SSH connection is required - just S3 API access.\n"));
+    console.log(dim("Requires AWS CLI to be installed.\n"));
 
     try {
+      // Check for AWS CLI
+      await withSpinner("Checking for AWS CLI", async () => {
+        try {
+          const awsCheck = new Deno.Command("which", {
+            args: ["aws"],
+            stdout: "null",
+            stderr: "null",
+          });
+          const { success } = await awsCheck.output();
+          
+          if (!success) {
+            throw new Error("AWS CLI not found");
+          }
+        } catch {
+          throw new Error("AWS CLI is required for validation. Install with: brew install awscli");
+        }
+      });
+
       // Try to load endpoint from config file first
       const configFile = "garage-cluster-config.json";
       let endpoint = "";
+      let adminEndpoint = "";
       
       try {
         const configContent = await Deno.readTextFile(configFile);
@@ -1562,74 +1581,202 @@ export class Wizard {
         
         console.log(green(`✓ Found ${configFile}`));
         
-        // Get S3 API port from config (default to 3900)
+        // Get ports from config
         const s3Port = config.cluster?.ports?.s3Api || 3900;
+        const adminPort = config.cluster?.ports?.admin || 3903;
         const nodeHost = config.nodes[0].host;
         endpoint = `http://${nodeHost}:${s3Port}`;
+        adminEndpoint = `http://${nodeHost}:${adminPort}`;
         
-        console.log(dim(`  S3 Endpoint: ${endpoint}\n`));
+        console.log(dim(`  S3 API: ${endpoint}`));
+        console.log(dim(`  Admin API: ${adminEndpoint}\n`));
         
         const useConfig = await Confirm.prompt({
-          message: "Use endpoint from config file?",
+          message: "Use configuration from file?",
           default: true,
         });
         
         if (!useConfig) {
           endpoint = "";
+          adminEndpoint = "";
         }
       } catch {
         // Config file doesn't exist or is invalid
       }
       
-      // Prompt for endpoint if not loaded from config
+      // Prompt for endpoints if not loaded from config
       if (!endpoint) {
         const host = await Input.prompt({
           message: "Garage S3 API hostname or IP:",
-          validate: (value) => {
+          validate: (value: string) => {
             if (!value) return "Hostname is required";
             return true;
           },
         });
         
-        const port = await NumberPrompt.prompt({
+        const s3Port = await NumberPrompt.prompt({
           message: "S3 API port:",
           default: 3900,
           min: 1,
           max: 65535,
         });
+
+        const adminPort = await NumberPrompt.prompt({
+          message: "Admin API port:",
+          default: 3903,
+          min: 1,
+          max: 65535,
+        });
         
-        endpoint = `http://${host}:${port}`;
+        endpoint = `http://${host}:${s3Port}`;
+        adminEndpoint = `http://${host}:${adminPort}`;
       }
       
-      // Prompt for S3 credentials
-      console.log(bold(cyan("\n=== S3 Credentials ===")));
-      console.log(dim("Enter your Garage S3 access credentials:"));
-      console.log(dim("(These should have read/write access to a test bucket)\n"));
-      
-      const accessKey = await Input.prompt({
-        message: "Access Key ID:",
-        validate: (value) => {
-          if (!value) return "Access key is required";
-          return true;
-        },
+      // Ask if user wants to create new credentials or use existing
+      console.log(bold(cyan("\n=== Validation Mode ===")));
+      const mode = await Select.prompt({
+        message: "Choose validation mode:",
+        options: [
+          { name: "Create new test credentials (recommended)", value: "create" },
+          { name: "Use existing credentials", value: "existing" },
+        ],
+        default: "create",
       });
-      
-      const secretKey = await Secret.prompt({
-        message: "Secret Access Key:",
-        validate: (value) => {
-          if (!value) return "Secret key is required";
-          return true;
-        },
-      });
-      
-      const bucketName = await Input.prompt({
-        message: "Test bucket name:",
-        default: "installer-test-bucket",
-        hint: "Must exist and be writable",
-      });
+
+      let accessKey = "";
+      let secretKey = "";
+      let bucketName = "installer-test-bucket";
+      let createdResources = false;
+
+      if (mode === "create") {
+        // Create bucket and key using AWS CLI + Admin API
+        console.log(dim("\nCreating test resources via Admin API...\n"));
+        
+        const keyName = `test-key-${Date.now()}`;
+        bucketName = `test-bucket-${Date.now()}`;
+
+        // Create key via Admin API
+        await withSpinner("Creating access key via Admin API", async () => {
+          const curlCmd = new Deno.Command("curl", {
+            args: [
+              "-s", "-f",
+              "-X", "POST",
+              `${adminEndpoint}/v1/key`,
+              "-H", "Content-Type: application/json",
+              "-d", JSON.stringify({ name: keyName }),
+            ],
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stdout, stderr } = await curlCmd.output();
+          if (!success) {
+            const errorMsg = new TextDecoder().decode(stderr);
+            throw new Error(`Failed to create key: ${errorMsg}`);
+          }
+          
+          const response = JSON.parse(new TextDecoder().decode(stdout));
+          accessKey = response.accessKeyId;
+          secretKey = response.secretAccessKey;
+          
+          if (!accessKey || !secretKey) {
+            throw new Error("Failed to get credentials from response");
+          }
+        });
+
+        console.log(dim(`  Access Key: ${accessKey}`));
+        console.log(dim(`  Secret Key: ${secretKey.substring(0, 10)}...\n`));
+
+        // Create bucket using AWS CLI
+        await withSpinner("Creating test bucket", async () => {
+          const createBucketCmd = new Deno.Command("aws", {
+            args: [
+              "--endpoint-url", endpoint,
+              "s3", "mb",
+              `s3://${bucketName}`,
+            ],
+            env: {
+              AWS_ACCESS_KEY_ID: accessKey,
+              AWS_SECRET_ACCESS_KEY: secretKey,
+            },
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stderr } = await createBucketCmd.output();
+          if (!success) {
+            const errorMsg = new TextDecoder().decode(stderr);
+            if (!errorMsg.includes("BucketAlreadyOwnedByYou")) {
+              throw new Error(`Failed to create bucket: ${errorMsg}`);
+            }
+          }
+        });
+
+        createdResources = true;
+      } else {
+        // Use existing credentials
+        console.log(bold(cyan("\n=== S3 Credentials ===")));
+        console.log(dim("Enter your existing Garage S3 credentials:\n"));
+        
+        accessKey = await Input.prompt({
+          message: "Access Key ID:",
+          validate: (value: string) => {
+            if (!value) return "Access key is required";
+            return true;
+          },
+        });
+        
+        secretKey = await Secret.prompt({
+          message: "Secret Access Key:",
+          validate: (value: string) => {
+            if (!value) return "Secret key is required";
+            return true;
+          },
+        });
+        
+        bucketName = await Input.prompt({
+          message: "Test bucket name:",
+          default: "installer-test-bucket",
+          hint: "Must exist and be writable",
+        });
+      }
 
       // Run validation test
       await this.runValidationTest(endpoint, accessKey, secretKey, bucketName);
+
+      // Cleanup created resources
+      if (createdResources) {
+        await withSpinner("Cleaning up test resources", async () => {
+          // Delete bucket
+          const deleteBucketCmd = new Deno.Command("aws", {
+            args: [
+              "--endpoint-url", endpoint,
+              "s3", "rb",
+              `s3://${bucketName}`,
+              "--force",
+            ],
+            env: {
+              AWS_ACCESS_KEY_ID: accessKey,
+              AWS_SECRET_ACCESS_KEY: secretKey,
+            },
+            stdout: "null",
+            stderr: "null",
+          });
+          await deleteBucketCmd.output();
+
+          // Delete key via Admin API
+          const curlCmd = new Deno.Command("curl", {
+            args: [
+              "-s",
+              "-X", "DELETE",
+              `${adminEndpoint}/v1/key?id=${accessKey}`,
+            ],
+            stdout: "null",
+            stderr: "null",
+          });
+          await curlCmd.output();
+        });
+      }
 
       console.log(green(bold("\n✓ Validation complete!")));
       console.log(dim("\nYour Garage S3 API is accessible and working correctly."));
@@ -1643,169 +1790,93 @@ export class Wizard {
 
   private async runValidationTest(endpoint: string, accessKey: string, secretKey: string, bucketName: string) {
     console.log(bold(cyan("\n=== Running Validation Test ===")));
-    console.log(dim("Testing S3 API from your local machine...\n"));
+    console.log(dim("Testing S3 API from your local machine using AWS CLI...\n"));
     
     try {
       const testFile = "installer-test.html";
       const testContent = "<html><body><h1>Garage Test - Success!</h1></body></html>";
       const localTestPath = `/tmp/${testFile}`;
+      const downloadPath = `/tmp/downloaded-${testFile}`;
       
       // Step 1: Create local test file
       await withSpinner("Creating test file", async () => {
         await Deno.writeTextFile(localTestPath, testContent);
       });
       
-      // Step 2: Check for AWS CLI
-      let useAwsCli = false;
-      await withSpinner("Checking for AWS CLI", async () => {
-        try {
-          const awsCheck = new Deno.Command("which", {
-            args: ["aws"],
-            stdout: "null",
-            stderr: "null",
-          });
-          const { success } = await awsCheck.output();
-          useAwsCli = success;
-        } catch {
-          useAwsCli = false;
-        }
-      });
-      
-      if (!useAwsCli) {
-        console.log(yellow("\n  ℹ AWS CLI not found - using curl (basic S3 testing)"));
-        console.log(dim("  For full S3 compatibility testing, install AWS CLI:\n"));
-        console.log(dim("    brew install awscli"));
-        console.log(dim("    # or"));
-        console.log(dim("    pip install awscli\n"));
-      }
-      
-      // Step 3: Upload test file
+      // Step 2: Upload test file
       await withSpinner("Uploading test file to S3", async () => {
-        if (useAwsCli) {
-          // Use AWS CLI for proper S3 upload
-          const uploadCmd = new Deno.Command("aws", {
-            args: [
-              "--endpoint-url", endpoint,
-              "s3", "cp",
-              localTestPath,
-              `s3://${bucketName}/${testFile}`,
-            ],
-            env: {
-              AWS_ACCESS_KEY_ID: accessKey,
-              AWS_SECRET_ACCESS_KEY: secretKey,
-            },
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stderr } = await uploadCmd.output();
-          if (!success) {
-            const errorMsg = new TextDecoder().decode(stderr);
-            throw new Error(`Upload failed: ${errorMsg}`);
-          }
-        } else {
-          // Use curl for basic PUT
-          const curlCmd = new Deno.Command("curl", {
-            args: [
-              "-f", "-s",
-              "-X", "PUT",
-              "-H", `Host: ${bucketName}.s3.garage`,
-              "-H", "Content-Type: text/html",
-              "--data-binary", `@${localTestPath}`,
-              `${endpoint}/${testFile}`,
-            ],
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stdout, stderr } = await curlCmd.output();
-          if (!success) {
-            const errorMsg = new TextDecoder().decode(stderr) || new TextDecoder().decode(stdout);
-            throw new Error(`Upload failed: ${errorMsg}`);
-          }
-        }
-      });
-      
-      // Step 4: Download and verify
-      await withSpinner("Downloading and verifying file", async () => {
-        if (useAwsCli) {
-          // Use AWS CLI for proper S3 download
-          const downloadPath = `/tmp/downloaded-${testFile}`;
-          const downloadCmd = new Deno.Command("aws", {
-            args: [
-              "--endpoint-url", endpoint,
-              "s3", "cp",
-              `s3://${bucketName}/${testFile}`,
-              downloadPath,
-            ],
-            env: {
-              AWS_ACCESS_KEY_ID: accessKey,
-              AWS_SECRET_ACCESS_KEY: secretKey,
-            },
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stderr } = await downloadCmd.output();
-          if (!success) {
-            const errorMsg = new TextDecoder().decode(stderr);
-            throw new Error(`Download failed: ${errorMsg}`);
-          }
-          
-          // Verify content
-          const downloaded = await Deno.readTextFile(downloadPath);
-          if (downloaded !== testContent) {
-            throw new Error("Downloaded content doesn't match uploaded content");
-          }
-          
-          // Cleanup downloaded file
-          await Deno.remove(downloadPath);
-        } else {
-          // Use curl for basic GET
-          const curlCmd = new Deno.Command("curl", {
-            args: [
-              "-f", "-s",
-              "-H", `Host: ${bucketName}.s3.garage`,
-              `${endpoint}/${testFile}`,
-            ],
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stdout, stderr } = await curlCmd.output();
-          if (!success) {
-            const errorMsg = new TextDecoder().decode(stderr);
-            throw new Error(`Download failed: ${errorMsg}`);
-          }
-          
-          const downloaded = new TextDecoder().decode(stdout);
-          if (!downloaded.includes("Garage Test")) {
-            throw new Error(`Downloaded content doesn't match. Got: ${downloaded.substring(0, 100)}`);
-          }
-        }
-      });
-      
-      // Step 5: Cleanup test file
-      await withSpinner("Cleaning up", async () => {
-        await Deno.remove(localTestPath);
+        const uploadCmd = new Deno.Command("aws", {
+          args: [
+            "--endpoint-url", endpoint,
+            "s3", "cp",
+            localTestPath,
+            `s3://${bucketName}/${testFile}`,
+          ],
+          env: {
+            AWS_ACCESS_KEY_ID: accessKey,
+            AWS_SECRET_ACCESS_KEY: secretKey,
+          },
+          stdout: "piped",
+          stderr: "piped",
+        });
         
-        // Optionally delete test file from S3
-        if (useAwsCli) {
-          const deleteCmd = new Deno.Command("aws", {
-            args: [
-              "--endpoint-url", endpoint,
-              "s3", "rm",
-              `s3://${bucketName}/${testFile}`,
-            ],
-            env: {
-              AWS_ACCESS_KEY_ID: accessKey,
-              AWS_SECRET_ACCESS_KEY: secretKey,
-            },
-            stdout: "null",
-            stderr: "null",
-          });
-          await deleteCmd.output();
+        const { success, stderr } = await uploadCmd.output();
+        if (!success) {
+          const errorMsg = new TextDecoder().decode(stderr);
+          throw new Error(`Upload failed: ${errorMsg}`);
         }
+      });
+      
+      // Step 3: Download and verify
+      await withSpinner("Downloading and verifying file", async () => {
+        const downloadCmd = new Deno.Command("aws", {
+          args: [
+            "--endpoint-url", endpoint,
+            "s3", "cp",
+            `s3://${bucketName}/${testFile}`,
+            downloadPath,
+          ],
+          env: {
+            AWS_ACCESS_KEY_ID: accessKey,
+            AWS_SECRET_ACCESS_KEY: secretKey,
+          },
+          stdout: "piped",
+          stderr: "piped",
+        });
+        
+        const { success, stderr } = await downloadCmd.output();
+        if (!success) {
+          const errorMsg = new TextDecoder().decode(stderr);
+          throw new Error(`Download failed: ${errorMsg}`);
+        }
+        
+        // Verify content
+        const downloaded = await Deno.readTextFile(downloadPath);
+        if (downloaded !== testContent) {
+          throw new Error("Downloaded content doesn't match uploaded content");
+        }
+      });
+      
+      // Step 4: Cleanup local files
+      await withSpinner("Cleaning up local files", async () => {
+        await Deno.remove(localTestPath);
+        await Deno.remove(downloadPath);
+        
+        // Delete test file from S3
+        const deleteCmd = new Deno.Command("aws", {
+          args: [
+            "--endpoint-url", endpoint,
+            "s3", "rm",
+            `s3://${bucketName}/${testFile}`,
+          ],
+          env: {
+            AWS_ACCESS_KEY_ID: accessKey,
+            AWS_SECRET_ACCESS_KEY: secretKey,
+          },
+          stdout: "null",
+          stderr: "null",
+        });
+        await deleteCmd.output();
       });
       
       console.log(green(bold("\n✓ All tests passed!")));

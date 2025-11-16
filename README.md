@@ -55,6 +55,7 @@ That's it! The wizard will guide you through:
 - SSH client
 - Network access to both nodes
 - SSH credentials (key or password)
+- **AWS CLI** (required for validation) - `brew install awscli` or `pip install awscli`
 - **No other dependencies needed** - the installer is a single binary
 
 ### Remote Nodes (where Garage will run)
