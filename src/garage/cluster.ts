@@ -42,11 +42,11 @@ export class GarageCluster {
     await docker.stopContainer("garage");
     await docker.removeContainer("garage");
 
-    // Step 3: Create directories
+    // Step 3: Create directories (in user's home directory, no sudo needed)
     const workdir = this.config.workdir;
-    await node.connection!.exec(`sudo mkdir -p ${workdir}`);
-    await node.connection!.exec(`sudo mkdir -p ${this.config.dataDir}`);
-    await node.connection!.exec(`sudo mkdir -p ${this.config.metaDir}`);
+    await node.connection!.exec(`mkdir -p ${workdir}`);
+    await node.connection!.exec(`mkdir -p ${this.config.dataDir}`);
+    await node.connection!.exec(`mkdir -p ${this.config.metaDir}`);
     
     // Track directory creation for cleanup
     if (this.cleanupManager) {
@@ -59,16 +59,12 @@ export class GarageCluster {
     const uid = uidResult.stdout.trim();
     const gid = gidResult.stdout.trim();
 
-    // Set ownership
-    await node.connection!.exec(`sudo chown -R ${uid}:${gid} ${this.config.dataDir}`);
-    await node.connection!.exec(`sudo chown -R ${uid}:${gid} ${this.config.metaDir}`);
-    await node.connection!.exec(`sudo chown -R ${uid}:${gid} ${workdir}`);
-
     // Step 4: Generate config
     const garageConfig = this.generateGarageConfig(node);
-    await node.connection!.exec(`sudo mkdir -p ${workdir}`);
+    
+    // Create workdir as user (no sudo needed since it's in home directory)
+    await node.connection!.exec(`mkdir -p ${workdir}`);
     await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
-    await node.connection!.exec(`sudo chown ${uid}:${gid} ${workdir}/garage.toml`);
     
     // Track config writing for cleanup
     if (this.cleanupManager) {
