@@ -24,17 +24,47 @@ deno compile \
     --output=dist/garage-installer-linux-x64 \
     mod.ts
 
-echo "✓ Linux build complete"
+echo "✓ Linux x86_64 build complete"
 echo
 
-echo "Building for macOS x86_64..."
+echo "Building for Linux ARM64..."
+deno compile \
+    --allow-all \
+    --target aarch64-unknown-linux-gnu \
+    --output=dist/garage-installer-linux-arm64 \
+    mod.ts
+
+echo "✓ Linux ARM64 build complete"
+echo
+
+echo "Building for macOS x86_64 (Intel)..."
 deno compile \
     --allow-all \
     --target x86_64-apple-darwin \
     --output=dist/garage-installer-macos-x64 \
     mod.ts
 
-echo "✓ macOS build complete"
+echo "✓ macOS x86_64 build complete"
+echo
+
+echo "Building for macOS ARM64 (Apple Silicon)..."
+deno compile \
+    --allow-all \
+    --target aarch64-apple-darwin \
+    --output=dist/garage-installer-macos-arm64 \
+    mod.ts
+
+echo "✓ macOS ARM64 build complete"
+echo
+
+echo "Building for Windows x86_64..."
+deno compile \
+    --allow-all \
+    --target x86_64-pc-windows-msvc \
+    --output=dist/garage-installer-windows-x64 \
+    mod.ts
+
+echo "✓ Windows x86_64 build complete"
 echo
 
 echo "=== Build Summary ==="
@@ -43,4 +73,9 @@ echo
 
 echo "✓ All builds complete!"
 echo
-echo "Test with: ./dist/garage-installer-linux-x64"
+echo "Binaries created:"
+echo "  - Linux x86_64:        ./dist/garage-installer-linux-x64"
+echo "  - Linux ARM64:         ./dist/garage-installer-linux-arm64"
+echo "  - macOS x86_64:        ./dist/garage-installer-macos-x64"
+echo "  - macOS ARM64:         ./dist/garage-installer-macos-arm64"
+echo "  - Windows x86_64:      ./dist/garage-installer-windows-x64.exe"

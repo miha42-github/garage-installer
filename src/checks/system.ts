@@ -86,14 +86,32 @@ export class SystemChecker {
       const whoamiResult = await this.ssh.exec("whoami");
       const username = whoamiResult.stdout.trim();
 
+      // Check if user is already in docker group but needs to activate it
+      const groupCheck = await this.ssh.exec(`groups ${username} | grep docker || echo ""`);
+      const inDockerGroup = groupCheck.stdout.includes("docker");
+
+      // Check if sudo docker works (passwordless sudo)
+      const sudoCheck = await this.ssh.exec("sudo -n docker ps 2>&1");
+      
+      if (sudoCheck.code === 0) {
+        console.log("  Note: User not in docker group, but sudo works. Will use 'sudo docker' for this session.");
+        return {
+          name: "Docker Permissions",
+          passed: true,
+          message: "Docker accessible via sudo (user not in docker group)",
+        };
+      }
+
+      // Neither direct docker nor sudo docker work - return info for manual intervention
       return {
         name: "Docker Permissions",
         passed: false,
-        message: "User not in docker group",
-        autoFix: async (ssh) => {
-          await ssh.exec(`sudo usermod -aG docker ${username}`);
-          // Note: User needs to log out/in for group changes to take effect
-          // We'll use sudo docker for now
+        message: inDockerGroup 
+          ? "User is in docker group but needs to activate it (newgrp docker or re-login)"
+          : "User not in docker group and sudo requires password",
+        autoFix: async () => {
+          // This will be handled by the wizard with proper prompts
+          throw new Error("MANUAL_INTERVENTION_REQUIRED");
         },
       };
     }
@@ -106,7 +124,8 @@ export class SystemChecker {
   }
 
   private async checkDiskSpace(): Promise<CheckResult> {
-    const result = await this.ssh.exec("df -BG /var/lib | tail -1 | awk '{print $4}'");
+    // Check disk space in the home directory (where garage data will be stored by default)
+    const result = await this.ssh.exec("df -BG ~ | tail -1 | awk '{print $4}'");
     
     if (result.code !== 0) {
       return {
@@ -133,9 +152,27 @@ export class SystemChecker {
     const busyPorts: number[] = [];
 
     for (const port of portsToCheck) {
-      const result = await this.ssh.exec(
-        `sudo ss -tlnp | grep ":${port} " || true`
+      // Try without sudo first (ss or netstat)
+      let result = await this.ssh.exec(
+        `ss -tlnp 2>/dev/null | grep ":${port} " || netstat -tlnp 2>/dev/null | grep ":${port} " || echo ""`
       );
+      
+      // If command not found or no output, try with sudo
+      if (result.code !== 0 || (result.stdout.trim().length === 0 && result.stderr.includes("not found"))) {
+        // Check if sudo is available and doesn't require password
+        const sudoCheck = await this.ssh.exec("sudo -n true 2>&1");
+        
+        if (sudoCheck.code === 0) {
+          // sudo available without password
+          result = await this.ssh.exec(
+            `sudo ss -tlnp 2>/dev/null | grep ":${port} " || sudo netstat -tlnp 2>/dev/null | grep ":${port} " || true`
+          );
+        } else {
+          // Can't check ports reliably without sudo, assume they're free
+          console.log(`  Note: Cannot check port ${port} without sudo. Proceeding with assumption it's available.`);
+          continue;
+        }
+      }
       
       if (result.stdout.trim().length > 0) {
         busyPorts.push(port);
@@ -185,17 +222,25 @@ export class SystemChecker {
       passed: false,
       message: "Docker Compose not installed",
       autoFix: async (ssh) => {
+        // Check if passwordless sudo is available
+        const sudoCheck = await ssh.exec("sudo -n true 2>&1");
+        
+        if (sudoCheck.code !== 0) {
+          // Return error to be handled by wizard with proper prompts
+          throw new Error("MANUAL_INTERVENTION_REQUIRED");
+        }
+        
         // Docker Compose v2 is now included with Docker Desktop
         // For servers, it's installed as a plugin
         const arch = await ssh.exec("uname -m");
         const archStr = arch.stdout.trim();
         
-        await ssh.exec("sudo mkdir -p /usr/local/lib/docker/cli-plugins");
+        await ssh.exec("sudo -n mkdir -p /usr/local/lib/docker/cli-plugins");
         await ssh.exec(
-          `sudo curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} ` +
+          `sudo -n curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} ` +
           `-o /usr/local/lib/docker/cli-plugins/docker-compose`
         );
-        await ssh.exec("sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
+        await ssh.exec("sudo -n chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
       },
     };
   }
