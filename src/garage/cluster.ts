@@ -67,18 +67,27 @@ export class GarageCluster {
     const gid = gidResult.stdout.trim();
 
     // Resolve hostname to IP for rpc_public_addr
+    console.log(dim(`  Resolving ${node.host}...`));
     const publicIP = await this.resolveToIP(node.host);
     
     if (publicIP !== node.host) {
-      console.log(dim(`  Resolved ${node.host} → ${publicIP}`));
+      console.log(green(`  ✓ Resolved ${node.host} → ${publicIP}`));
+    } else {
+      console.log(dim(`  Using ${node.host} as-is (already an IP or resolution failed)`));
     }
 
     // Step 4: Generate config
     const garageConfig = this.generateGarageConfig(node, [], publicIP);
     
+    console.log(dim(`  Generated config with rpc_public_addr: ${publicIP}:${this.config.ports.rpc}`));
+    
     // Create workdir as user (no sudo needed since it's in home directory)
     await node.connection!.exec(`mkdir -p ${workdir}`);
     await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
+    
+    // Verify what we wrote
+    const verify = await node.connection!.exec(`grep rpc_public_addr ${workdir}/garage.toml`);
+    console.log(dim(`  Wrote: ${verify.stdout.trim()}`));
     
     // Track config writing for cleanup
     if (this.cleanupManager) {
