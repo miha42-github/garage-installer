@@ -1732,6 +1732,44 @@ export class Wizard {
         console.log(dim(`  Access Key: ${accessKey}`));
         console.log(dim(`  Secret Key: ${secretKey.substring(0, 10)}...\n`));
 
+        // Grant permission to create buckets
+        await withSpinner("Granting bucket creation permission", async () => {
+          const curlCmd = new Deno.Command("curl", {
+            args: [
+              "-s", "-w", "\\nHTTP_CODE:%{http_code}",
+              "-X", "POST",
+              `${adminEndpoint}/v1/key/import`,
+              "-H", "Content-Type: application/json",
+              "-H", `Authorization: Bearer ${adminToken}`,
+              "-d", JSON.stringify({
+                accessKeyId: accessKey,
+                secretAccessKey: secretKey,
+                name: keyName,
+                allow: {
+                  createBucket: true
+                }
+              }),
+            ],
+            stdout: "piped",
+            stderr: "piped",
+          });
+          
+          const { success, stdout, stderr } = await curlCmd.output();
+          const output = new TextDecoder().decode(stdout);
+          const errorOutput = new TextDecoder().decode(stderr);
+          
+          const httpCodeMatch = output.match(/HTTP_CODE:(\d+)/);
+          const httpCode = httpCodeMatch ? parseInt(httpCodeMatch[1]) : 0;
+          const responseBody = output.replace(/\nHTTP_CODE:\d+$/, '');
+          
+          if (!success || httpCode >= 400 || httpCode === 0) {
+            let errorMsg = `HTTP ${httpCode}`;
+            if (responseBody) errorMsg += `: ${responseBody}`;
+            if (errorOutput) errorMsg += ` (${errorOutput})`;
+            throw new Error(`Failed to grant permissions: ${errorMsg}`);
+          }
+        });
+
         // Create bucket using AWS CLI
         await withSpinner("Creating test bucket", async () => {
           const createBucketCmd = new Deno.Command("aws", {
