@@ -1659,7 +1659,7 @@ export class Wizard {
         await withSpinner("Creating access key via Admin API", async () => {
           const curlCmd = new Deno.Command("curl", {
             args: [
-              "-s", "-f",
+              "-s", "-w", "\\nHTTP_CODE:%{http_code}",
               "-X", "POST",
               `${adminEndpoint}/v1/key`,
               "-H", "Content-Type: application/json",
@@ -1670,17 +1670,32 @@ export class Wizard {
           });
           
           const { success, stdout, stderr } = await curlCmd.output();
-          if (!success) {
-            const errorMsg = new TextDecoder().decode(stderr);
+          const output = new TextDecoder().decode(stdout);
+          const errorOutput = new TextDecoder().decode(stderr);
+          
+          // Extract HTTP code from output
+          const httpCodeMatch = output.match(/HTTP_CODE:(\d+)/);
+          const httpCode = httpCodeMatch ? parseInt(httpCodeMatch[1]) : 0;
+          const responseBody = output.replace(/\nHTTP_CODE:\d+$/, '');
+          
+          if (!success || httpCode >= 400 || httpCode === 0) {
+            let errorMsg = `HTTP ${httpCode}`;
+            if (responseBody) errorMsg += `: ${responseBody}`;
+            if (errorOutput) errorMsg += ` (${errorOutput})`;
+            if (httpCode === 0) errorMsg = `Cannot connect to Admin API at ${adminEndpoint}. Is the cluster running?`;
             throw new Error(`Failed to create key: ${errorMsg}`);
           }
           
-          const response = JSON.parse(new TextDecoder().decode(stdout));
-          accessKey = response.accessKeyId;
-          secretKey = response.secretAccessKey;
-          
-          if (!accessKey || !secretKey) {
-            throw new Error("Failed to get credentials from response");
+          try {
+            const response = JSON.parse(responseBody);
+            accessKey = response.accessKeyId;
+            secretKey = response.secretAccessKey;
+            
+            if (!accessKey || !secretKey) {
+              throw new Error(`API response missing credentials. Got: ${responseBody.substring(0, 100)}`);
+            }
+          } catch (parseError: any) {
+            throw new Error(`Invalid JSON response from Admin API: ${parseError.message}. Response: ${responseBody.substring(0, 200)}`);
           }
         });
 
