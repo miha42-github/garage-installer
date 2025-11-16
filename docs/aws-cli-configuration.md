@@ -1,5 +1,7 @@
 # AWS CLI Configuration for Garage
 
+**[← Back to Documentation Index](README.md)** | **[Main README](../README.md)**
+
 This guide explains how to properly configure the AWS CLI to work with your Garage S3 cluster.
 
 ## Why Special Configuration is Needed

@@ -2,7 +2,7 @@
 
 **One binary. Two nodes. Zero hassle.**
 
-Interactive wizard that deploys a production-ready Garage S3-compatible object storage cluster on two Ubuntu nodes using Docker.
+Interactive wizard that deploys a two-node dev/test Garage S3-compatible object storage cluster on Ubuntu/Debian nodes using Docker.
 
 ## Features
 
@@ -10,14 +10,62 @@ Interactive wizard that deploys a production-ready Garage S3-compatible object s
 - ✅ Automated SSH connectivity and key management
 - ✅ Pre-flight system checks with auto-fix
 - ✅ Docker-based deployment (non-root)
-- ✅ Complete cluster configuration
+- ✅ State persistence with resume capability
 - ✅ Single compiled binary - no dependencies
 - ✅ Cross-platform (Linux, macOS, Windows)
-- ✅ Progress indicators for long operations
-- ✅ Comprehensive logging for troubleshooting
 - ✅ Automatic rollback on failure
 - ✅ IPv6 and dual-stack support
-- ✅ Configurable ports and paths
+- ✅ Comprehensive logging and troubleshooting
+
+## Documentation
+
+📚 **[Complete Documentation →](docs/README.md)**
+
+- **Configuration Guides**
+  - [AWS CLI Configuration](docs/aws-cli-configuration.md) - Setup and usage with Garage
+  - [Node.js + Express Integration](docs/nodejs-express-integration.md) - Backend integration patterns
+  
+- **Operations**
+  - [Troubleshooting Guide](docs/troubleshooting.md) - Comprehensive problem resolution
+  - [State Persistence & Resume](docs/state-persistence.md) - Checkpoint and recovery
+
+- **Project Information**
+  - [Future Roadmap](FUTURES.md) - Planned features and improvements
+  - [Contributing](CONTRIBUTING.md) - How to contribute
+  - [Changelog](CHANGELOG.md) - Version history
+
+## Why This Installer?
+
+### Why Deno?
+- **Single binary** - Compile to standalone executable, no runtime needed
+- **TypeScript native** - Built-in support, no build step
+- **No dependencies hell** - No npm/node_modules, cleaner deployment
+- **Cross-platform** - Works on Linux, macOS, Windows out of the box
+
+### Why Docker?
+- **Non-root execution** - Better security boundary
+- **Dependency isolation** - No system package conflicts
+- **Easy cleanup** - Remove everything with one command
+- **Consistent environment** - Same setup across all platforms
+- **Version pinning** - Control exactly what gets deployed
+
+### Deployment Model
+```
+[Your Machine]
+    └── garage-installer binary
+        ├── SSH to Node 1
+        │   ├── Preflight checks
+        │   ├── Docker setup
+        │   └── Deploy container
+        ├── SSH to Node 2
+        │   ├── Preflight checks
+        │   ├── Docker setup
+        │   └── Deploy container
+        └── Configure Cluster
+            ├── Connect nodes
+            ├── Apply layout
+            └── Verify health
+```
 
 ## Quick Start
 
@@ -62,15 +110,19 @@ That's it! The wizard will guide you through:
 - Ubuntu 20.04+ or Debian 11+ (recommended)
 - SSH server running
 - Same user account on both nodes
+- **Docker installed** - See [installation guide](docs/troubleshooting.md#installing-prerequisites)
+- **Docker Compose installed** - See [installation guide](docs/troubleshooting.md#installing-prerequisites)
+- User added to `docker` group (non-root Docker access)
 - At least 16GB disk space per node
 - Ports 3900-3903 available
 - Internet access to pull Docker images
 
+> **Note:** Docker and Docker Compose require manual installation on the remote nodes before running the installer. The installer cannot install them automatically as this requires sudo privileges with interactive password entry. See the [Installing Prerequisites](docs/troubleshooting.md#installing-prerequisites) section in the troubleshooting guide for detailed instructions.
+
 **The installer will automatically:**
-- Install Docker if not present
-- Install Docker Compose if not present
+- Verify Docker and Docker Compose are installed
 - Download Garage Docker image from Docker Hub
-- Configure Docker permissions
+- Configure Docker permissions (detect if sudo is needed)
 - Set up all required directories
 - Deploy and configure Garage cluster
 
@@ -80,7 +132,7 @@ On each node, the installer will:
 1. **Download Garage Docker image** - `dxflrs/garage:v2.1.0` (default, configurable)
 2. **Create directory structure:**
 ```
-/opt/garage/
+~/garage/
 ├── docker-compose.yml
 ├── garage.toml
 └── [Docker volumes for data/metadata]
@@ -97,101 +149,77 @@ Ports used:
 
 ## Post-Installation
 
-After successful installation, you can:
+After successful installation, you'll have access to Garage's S3 API.
 
-### Create a bucket
-```bash
-ssh user@node1
-docker exec garage garage bucket create my-bucket
-```
+**💡 For complete integration examples, see the [examples/](examples/) directory (AWS CLI and Node.js).**
 
-### Create access key
-```bash
-docker exec garage garage key create my-key
-```
+### Quick Start with AWS CLI
 
-### Grant permissions
 ```bash
-docker exec garage garage bucket allow my-bucket --read --write --key my-key
-```
-
-### Get credentials
-```bash
-docker exec garage garage key info my-key
-# Save the Access Key ID and Secret Access Key
-```
-
-### Use with AWS CLI
-```bash
+# Configure (credentials provided by installer)
 aws configure set aws_access_key_id YOUR_ACCESS_KEY
 aws configure set aws_secret_access_key YOUR_SECRET_KEY
 aws configure set default.region garage
+aws configure set default.s3.addressing_style path
 
-# Test
+# Create bucket and upload
+aws s3 mb s3://my-bucket --endpoint-url http://NODE_IP:3900
 echo "Hello Garage" > test.txt
 aws s3 cp test.txt s3://my-bucket/ --endpoint-url http://NODE_IP:3900
-aws s3 ls s3://my-bucket/ --endpoint-url http://NODE_IP:3900
 ```
 
-## Management
+📚 **See [AWS CLI Configuration Guide](docs/aws-cli-configuration.md) for complete setup instructions.**
 
-### Check cluster status
+### Management Commands
+
 ```bash
-ssh user@node1
-docker exec garage garage status
+# Check cluster status
+ssh user@node1 "docker exec garage /garage status"
+
+# View logs
+ssh user@node1 "docker logs garage"
+
+# Restart cluster
+ssh user@node1 "cd ~/garage && docker compose restart"
 ```
 
-### View logs
-```bash
-docker logs -f garage
-```
-
-### Restart Garage
-```bash
-cd /opt/garage
-docker compose restart
-```
-
-### Stop Garage
-```bash
-cd /opt/garage
-docker compose stop
-```
-
-### Update Garage version
-Edit `/opt/garage/docker-compose.yml`, change image version, then:
-```bash
-docker compose pull
-docker compose up -d
-```
+📚 **For day-2 operations, see the [Troubleshooting Guide](docs/troubleshooting.md).**
 
 ## Troubleshooting
 
-### SSH connection fails
-- Verify SSH credentials
-- Check firewall rules (port 22)
-- Ensure SSH key permissions are 600
-- **"setAutoPadding not supported" error**: The installer automatically uses compatible ciphers. If you still see this, your SSH server may need cipher configuration updates.
+**Common issues and quick fixes:**
 
-### Docker installation fails
-- Check internet connectivity on nodes
-- Verify package manager works
-- May need to manually install Docker first
+### SSH Connection Fails
+```bash
+# Check SSH access
+ssh user@hostname
 
-### Ports already in use
-- Check what's using ports: `sudo ss -tlnp | grep 3900`
-- Stop conflicting services
-- Or modify ports in configuration
+# Verify key permissions
+chmod 600 ~/.ssh/id_rsa
+```
 
-### Nodes can't see each other
-- Verify network connectivity: `ping node2` from node1
-- Check firewall allows port 3901
-- Ensure correct IP addresses configured
+### Docker Permission Denied
+```bash
+# Add user to docker group (requires re-login)
+sudo usermod -aG docker $USER
+```
 
-### Container won't start
-- Check logs: `docker logs garage`
-- Verify directory permissions
-- Check disk space: `df -h`
+### Ports Already in Use
+```bash
+# Find what's using the port
+sudo ss -tlnp | grep 3900
+```
+
+### Nodes Can't Reach Each Other
+```bash
+# Test connectivity
+ping node2-hostname
+
+# Check firewall (allow port 3901 for RPC)
+sudo ufw allow 3901/tcp
+```
+
+📚 **For comprehensive troubleshooting, see the [Troubleshooting Guide](docs/troubleshooting.md).**
 
 ## Development
 
@@ -239,116 +267,68 @@ deno task build-all
 
 Binaries will be in `dist/` directory.
 
-## Architecture
+## Security Considerations
 
-```
-garage-installer (Deno binary)
-    │
-    ├── SSH to Node 1
-    │   ├── Pre-flight checks (OS, Docker, ports, disk)
-    │   ├── Auto-fix issues (install Docker, etc.)
-    │   ├── Deploy container (docker-compose)
-    │   └── Start Garage
-    │
-    ├── SSH to Node 2
-    │   ├── Pre-flight checks
-    │   ├── Auto-fix issues
-    │   ├── Deploy container
-    │   └── Start Garage
-    │
-    └── Configure cluster
-        ├── Get node IDs
-        ├── Connect nodes
-        ├── Assign zones
-        ├── Apply layout
-        └── Verify health
-```
+The installer follows security best practices:
 
-## Key Features
+- **Non-root containers** - Garage runs as unprivileged user inside Docker
+- **Read-only configs** - Configuration files mounted read-only
+- **Secure secrets** - RPC secret generated using cryptographic randomness
+- **SSH key preference** - Prefers SSH keys over passwords
+- **No credential storage** - Passwords never written to disk
+- **Minimal permissions** - Only requests what's needed
 
-### Reliability
-- **Automatic rollback** - Cleanup system removes partial deployments on failure
-- **Dynamic sudo detection** - Handles Docker permissions automatically
-- **Connectivity testing** - Validates inter-node communication before deployment
-- **Bootstrap peers** - Nodes automatically reconnect after restarts
+**Network Security:**
+- Installer warns if nodes are on public IPs
+- All inter-node communication encrypted via Garage's built-in RPC
+- Admin API (port 3903) bound to all interfaces - use firewall rules to restrict
 
-### User Experience
-- **Progress indicators** - Visual spinners for long-running operations
-- **File logging** - Complete audit trail in `garage-installer.log`
-- **Input validation** - Bounds checking and helpful error messages
-- **Version warnings** - Alerts about untested Garage versions
+## Limitations & Use Cases
 
-### Flexibility
-- **Configurable ports** - Customize all service ports (default: 3900-3903)
-- **Configurable paths** - Change data/metadata directories
-- **IPv6 support** - Works with IPv4, IPv6, and dual-stack networks
-- **Cross-platform** - Runs on Linux, macOS, and Windows
+### Two-Node Clusters
+- ⚠️ **Not production-ready** - Requires 3+ nodes for fault tolerance
+- ✅ **Perfect for dev/test** - Fast setup, easy teardown
+- ✅ **Learning Garage** - Understand S3 operations
+- ⚠️ **Read-only on failure** - If one node dies, cluster is read-only
 
-## Security
+### When to Use This
+- Development and testing
+- Learning S3-compatible storage
+- Proof of concept deployments
+- Local testing environments
 
-- Runs Garage as non-root user inside Docker
-- Uses read-only config mounts
-- Generates cryptographically secure RPC secret
-- SSH keys preferred over passwords
-- No credentials stored on disk (except config backup)
+### When NOT to Use This
+- Production workloads (use 3+ nodes)
+- Business-critical data storage
+- High availability requirements
 
-## Limitations
+## What's Next?
 
-- Two-node clusters are **read-only on single node failure**
-- Not suitable for production (use 3+ nodes)
-- Perfect for dev/test/learning
-- Can scale to 3+ nodes manually after installation
+After installing your cluster:
 
-## Roadmap
+1. **Try it out** - Upload and download files with AWS CLI
+2. **Integrate** - Connect your applications using the [Node.js + Express guide](docs/nodejs-express-integration.md)
+3. **Monitor** - Access metrics endpoint on port 3903
+4. **Plan ahead** - See [FUTURES.md](FUTURES.md) for roadmap and upcoming features
 
-- [ ] Support for 3+ node clusters
-- [ ] TLS/SSL certificate management
-- [ ] Monitoring setup (Prometheus/Grafana)
-- [ ] Backup/restore wizard
-- [ ] Web UI option
-- [ ] Cloud provider support (AWS, GCP, Azure)
-- [ ] Upgrade wizard
+📚 **See [FUTURES.md](FUTURES.md)** for the complete development roadmap and planned features.
 
-## Contributing
+## Support & Community
 
-Contributions welcome! Please:
+- **Documentation**: https://garagehq.deuxfleurs.fr/documentation/
+- **Garage Project**: https://garagehq.deuxfleurs.fr/
+- **Matrix Chat**: #garage:deuxfleurs.fr
+- **Issues**: https://github.com/miha42-github/garage-installer/issues
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+## Credits
 
-## Platform Notes
+- **Garage S3** - Deuxfleurs (https://garagehq.deuxfleurs.fr)
+- **Funding** - EU Next Generation Internet Program
+- **Installer** - Community-driven
 
-### Windows
-The installer runs on Windows 10/11 with the following considerations:
+---
 
-**Requirements:**
-- PowerShell or Windows Terminal recommended
-- SSH client (OpenSSH is included in Windows 10 1809+)
-- SSH keys should be in Windows format (`C:\Users\YourName\.ssh\id_rsa`)
-
-**Known Compatibility:**
-- ✅ SSH connections work natively
-- ✅ Compiled binary runs without WSL
-- ✅ IPv4 and IPv6 support
-- ⚠️ Path separators are handled automatically by Deno
-- ⚠️ ANSI colors may not display in older terminals (use Windows Terminal)
-
-**Running on Windows:**
-```powershell
-.\garage-installer-windows-x64.exe
-```
-
-Default SSH key path will be `%USERPROFILE%\.ssh\id_rsa`.
-
-### Linux & macOS
-Full native support. Default SSH key path: `~/.ssh/id_rsa`.
-
-## License
-
-MIT License - see LICENSE file
+**Remember**: This installer creates a two-node cluster for development and testing. For production, deploy at least 3 nodes in different physical locations for proper fault tolerance.
 
 Garage itself is licensed under AGPLv3.
 
@@ -368,4 +348,4 @@ Garage itself is licensed under AGPLv3.
 
 **Remember**: This installer creates a two-node cluster. It's not production-ready. For production, deploy at least 3 nodes in different physical locations.
 
-But for learning, testing, or development? This is the easiest way to get started with Garage.
+But for learning, testing, or development? This is a quick way to get started with Garage.
