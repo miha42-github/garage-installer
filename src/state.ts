@@ -21,7 +21,7 @@ export interface InstallationState {
     metaDir: string;
     replicationFactor: number;
     rpcSecret: string;
-    capacity: string;
+    capacityPerNode: string;
     ports: {
       s3Api: number;
       rpc: number;
@@ -150,7 +150,7 @@ export class StateManager {
       metaDir: cluster.metaDir,
       replicationFactor: cluster.replicationFactor,
       rpcSecret: cluster.rpcSecret,
-      capacity: cluster.capacity,
+      capacityPerNode: cluster.capacityPerNode,
       ports: { ...cluster.ports },
     };
     

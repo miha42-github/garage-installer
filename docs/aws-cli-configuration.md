@@ -24,19 +24,15 @@ After a successful installation, the installer will display your cluster's S3 AP
 Create or edit `~/.aws/credentials`:
 ```ini
 [default]
-aws_access_key_id = GKxxxxxxxxxxxxxxxxxxxx
-aws_secret_access_key = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+aws_access_key_id=GKxxxxxxxxxxxxxxxxxxxx
+aws_secret_access_key=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 Create or edit `~/.aws/config`:
 ```ini
 [default]
-region = garage
-endpoint_url = http://your-node:3900
-
-[profile default]
-s3 =
-    addressing_style = path
+region=garage
+endpoint_url=http://your-node:3900
 ```
 
 ### Option 2: Environment Variables
@@ -141,9 +137,9 @@ Could not connect to the endpoint URL
 ```
 
 **Solutions:**
-1. Verify the node is accessible: `ping your-node`
+1. Verify the node is accessible: `ping cafe-1`
 2. Check firewall rules allow port 3900
-3. Verify Garage is running: `ssh user@node "docker ps | grep garage"`
+3. Verify Garage is running: `ssh mihay42@cafe-1 "docker ps | grep garage"`
 4. Try the other node's endpoint if you have multiple nodes
 
 ### Access Denied for Bucket Operations
@@ -156,12 +152,12 @@ An error occurred (AccessDenied) when calling the [operation]
 **Solutions:**
 1. Check bucket permissions are granted to your key:
    ```bash
-   ssh user@node "docker exec garage /garage bucket info my-bucket"
+   ssh mihay42@cafe-1 "docker exec garage /garage bucket info my-bucket"
    ```
 
 2. Grant permissions if needed:
    ```bash
-   ssh user@node "docker exec garage /garage bucket allow my-bucket --read --write --key YOUR_KEY_ID"
+   ssh mihay42@cafe-1 "docker exec garage /garage bucket allow my-bucket --read --write --key YOUR_KEY_ID"
    ```
 
 ## Managing Keys and Permissions
@@ -171,10 +167,11 @@ An error occurred (AccessDenied) when calling the [operation]
 Keys can only be created on the Garage server via SSH:
 
 ```bash
-# SSH to one of your nodes
-ssh user@node
+# Create a new key (from your local machine)
+ssh mihay42@cafe-1 "docker exec garage /garage key create my-new-key"
 
-# Create a new key
+# Or SSH to the node first
+ssh mihay42@cafe-1
 docker exec garage /garage key create my-new-key
 
 # IMPORTANT: Save the Secret Key immediately - it cannot be retrieved later!
@@ -182,29 +179,69 @@ docker exec garage /garage key create my-new-key
 
 **Output example:**
 ```
+==== ACCESS KEY INFORMATION ====
 Key ID:              GKxxxxxxxxxxxxxxxxxxxx
 Key name:            my-new-key
 Secret key:          xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-Created:             2025-11-16 00:00:00.000 +00:00
+Created:             2025-11-17 03:31:47.729 +00:00
+Validity:            valid
+Expiration:          never
+
+Can create buckets:  false
+
+==== BUCKETS FOR THIS KEY ====
+Permissions  ID  Global aliases  Local aliases
 ```
+
+**Enabling Bucket Creation:**
+
+By default, new keys cannot create buckets (`Can create buckets: false`). To grant this permission:
+
+```bash
+# Allow the key to create buckets (use the Key ID from above)
+ssh mihay42@cafe-1 "docker exec garage /garage key allow --create-bucket GKxxxxxxxxxxxxxxxxxxxx"
+```
+
+**Output after granting bucket creation permission:**
+```
+==== ACCESS KEY INFORMATION ====
+Key ID:              GKxxxxxxxxxxxxxxxxxxxx
+Key name:            my-new-key
+Secret key:          (redacted)
+Created:             2025-11-17 03:31:47.729 +00:00
+Validity:            valid
+Expiration:          never
+
+Can create buckets:  true
+
+==== BUCKETS FOR THIS KEY ====
+Permissions  ID  Global aliases  Local aliases
+```
+
+You can verify the permission was granted by checking `Can create buckets: true` in the output.
 
 ### Granting Bucket Permissions
 
 ```bash
-# Grant read/write permissions
-docker exec garage /garage bucket allow my-bucket --read --write --key GKxxxxxxxxxxxxxxxxxxxx
+# Grant full ownership (read, write, and ability to delete bucket)
+ssh mihay42@cafe-1 "docker exec garage /garage bucket allow --read --write --owner nextcloud-bucket --key nextcloud-app-key"
+
+# Grant read/write permissions (most common)
+ssh mihay42@cafe-1 "docker exec garage /garage bucket allow --read --write nextcloud-bucket --key nextcloud-app-key"
 
 # Grant read-only permissions
-docker exec garage /garage bucket allow my-bucket --read --key GKxxxxxxxxxxxxxxxxxxxx
+ssh mihay42@cafe-1 "docker exec garage /garage bucket allow --read nextcloud-bucket --key nextcloud-app-key"
 
 # Grant write-only permissions  
-docker exec garage /garage bucket allow my-bucket --write --key GKxxxxxxxxxxxxxxxxxxxx
+ssh mihay42@cafe-1 "docker exec garage /garage bucket allow --write nextcloud-bucket --key nextcloud-app-key"
 ```
+
+**Note:** Use bucket name (not bucket ID) and key name (not key ID) in these commands.
 
 ### Viewing Key Information
 
 ```bash
-docker exec garage /garage key info my-key-name
+ssh mihay42@cafe-1 "docker exec garage /garage key info my-key-name"
 ```
 
 **Note:** The secret key will be shown as `(redacted)` for security. It's only displayed once when the key is created.
@@ -298,11 +335,17 @@ garage-s3 s3 cp myfile.txt s3://my-bucket/
 Run these commands to verify everything works:
 
 ```bash
+# First, grant your key permission to create buckets (use your Key ID)
+ssh mihay42@cafe-1 "docker exec garage /garage key allow --create-bucket GKxxxxxxxxxxxxxxxxxxxx"
+
 # Test connectivity and credentials
 aws s3 ls
 
-# Create a test bucket
+# Create a test bucket (now works with create-bucket permission)
 aws s3 mb s3://test-bucket
+
+# Grant yourself permissions to use the bucket (use your key name)
+ssh mihay42@cafe-1 "docker exec garage /garage bucket allow --read --write test-bucket --key YOUR_KEY_NAME"
 
 # Upload a test file
 echo "Hello Garage!" > test.txt
@@ -317,6 +360,11 @@ aws s3 rm s3://test-bucket/test.txt
 aws s3 rb s3://test-bucket
 rm test.txt downloaded.txt
 ```
+
+**Important:** 
+1. Use Key ID (GKxxx...) with `key allow --create-bucket`
+2. Use key name with `bucket allow --read --write`
+3. After creating a bucket, you must grant your key read/write permissions to use it
 
 If all commands succeed, your AWS CLI is properly configured!
 
