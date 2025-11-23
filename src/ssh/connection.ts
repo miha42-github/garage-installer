@@ -120,12 +120,12 @@ export class SSHConnection {
           }
         });
 
-        stream.on("data", (data: Buffer) => {
-          stdout += data.toString();
+        stream.on("data", (data: Uint8Array) => {
+          stdout += new TextDecoder().decode(data);
         });
 
-        stream.stderr.on("data", (data: Buffer) => {
-          stderr += data.toString();
+        stream.stderr.on("data", (data: Uint8Array) => {
+          stderr += new TextDecoder().decode(data);
         });
       });
     });
@@ -193,8 +193,8 @@ export class SSHConnection {
         const readStream = sftp.createReadStream(remotePath);
         const chunks: Uint8Array[] = [];
 
-        readStream.on("data", (chunk: Buffer) => {
-          chunks.push(new Uint8Array(chunk));
+        readStream.on("data", (chunk: Uint8Array) => {
+          chunks.push(chunk);
         });
 
         readStream.on("close", () => {

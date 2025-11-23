@@ -5,6 +5,7 @@
 This guide shows how to integrate Garage S3-compatible storage into a Node.js/Express backend serving a React frontend.
 
 ## Table of Contents
+- [Garage Prerequisites](#garage-prerequisites)
 - [Architecture Overview](#architecture-overview)
 - [Setup and Configuration](#setup-and-configuration)
 - [Bucket Management](#bucket-management)
@@ -13,6 +14,648 @@ This guide shows how to integrate Garage S3-compatible storage into a Node.js/Ex
 - [Cluster Health Monitoring](#cluster-health-monitoring)
 - [Security Best Practices](#security-best-practices)
 - [Complete Example](#complete-example)
+
+## Garage Prerequisites
+
+Before integrating with Node.js, you need to set up access keys and permissions in Garage. This section covers the one-time setup required.
+
+### Prerequisites Checklist
+
+- ✅ Garage cluster running and accessible
+- ✅ SSH access to a Garage node (or Admin API access)
+- ✅ Docker container name (e.g., `garage`)
+- ✅ Admin privileges on the Garage cluster
+
+### Step 1: Create an Access Key
+
+Connect to your Garage node via SSH and create a key:
+
+```bash
+ssh mihay42@cafe-1 "docker exec garage /garage key create my-app-key"
+```
+
+**Example Output:**
+```
+==== ACCESS KEY INFORMATION ====
+
+Key ID: GK88a87e7a792e4e30e54b9d45
+Key name: my-app-key
+
+Secret key: c7f3c0a6a1f4e8b2d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7
+
+Created: "2025-11-17T10:30:00+00:00"
+Valid until: (not set - valid forever)
+Expires on: (not set - does not expire)
+
+Can create buckets: false
+
+Bucket permissions: (none)
+```
+
+**Important:** Save the `Key ID` and `Secret key` - you'll need these for your `.env` file.
+
+### Step 2: Grant Bucket Creation Permission
+
+Allow the key to create buckets:
+
+```bash
+ssh mihay42@cafe-1 "docker exec garage /garage key allow --create-bucket GK88a87e7a792e4e30e54b9d45"
+```
+
+Replace `GK88a87e7a792e4e30e54b9d45` with your actual Key ID from Step 1.
+
+**Example Output:**
+```
+==== ACCESS KEY INFORMATION ====
+
+Key ID: GK88a87e7a792e4e30e54b9d45
+Key name: my-app-key
+
+Secret key: (redacted)
+
+Created: "2025-11-17T10:30:00+00:00"
+Valid until: (not set - valid forever)
+Expires on: (not set - does not expire)
+
+Can create buckets: true
+
+Bucket permissions: (none)
+```
+
+Note: `Can create buckets` is now `true`.
+
+### Step 3: Create Buckets
+
+Create the buckets your application will use:
+
+```bash
+# Create main application bucket
+ssh mihay42@cafe-1 "docker exec garage /garage bucket create app-uploads"
+
+# Create user data bucket (if using multi-tenant approach)
+ssh mihay42@cafe-1 "docker exec garage /garage bucket create user-data-2025-11"
+```
+
+**Example Output:**
+```
+Bucket app-uploads has been created
+```
+
+### Step 4: Grant Bucket Permissions
+
+Grant read, write, and owner permissions to your key:
+
+```bash
+# Grant permissions using bucket name and key name
+ssh mihay42@cafe-1 "docker exec garage /garage bucket allow \
+  --read \
+  --write \
+  --owner \
+  app-uploads \
+  --key my-app-key"
+```
+
+**Example Output:**
+```
+Bucket permissions updated successfully
+```
+
+**Verify Permissions:**
+
+```bash
+ssh mihay42@cafe-1 "docker exec garage /garage bucket info app-uploads"
+```
+
+**Example Output:**
+```
+Bucket: app-uploads
+Size: 0 bytes (0 objects)
+Website access: false
+
+Global read access: false
+Authorized keys:
+  - my-app-key (read, write, owner)
+```
+
+### Step 5: Save Credentials
+
+Add the credentials to your `.env` file:
+
+```env
+# From Step 1
+GARAGE_ACCESS_KEY_ID=GK88a87e7a792e4e30e54b9d45
+GARAGE_SECRET_ACCESS_KEY=c7f3c0a6a1f4e8b2d9e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7
+
+# Your Garage endpoint
+GARAGE_ENDPOINT=http://cafe-1:3900
+GARAGE_REGION=garage
+```
+
+### Automation Alternative: Admin API
+
+For automated deployments, you can use the Garage Admin API instead of SSH:
+
+```bash
+# Create key via Admin API
+curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -X POST http://cafe-1:3903/v1/key \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-app-key"
+  }'
+
+# Grant bucket creation permission
+curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -X POST http://cafe-1:3903/v1/key/import \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accessKeyId": "GK88a87e7a792e4e30e54b9d45",
+    "name": "my-app-key",
+    "allow": {
+      "createBucket": true
+    }
+  }'
+
+# Create bucket
+curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -X POST http://cafe-1:3903/v1/bucket \
+  -H "Content-Type: application/json" \
+  -d '{
+    "globalAlias": "app-uploads"
+  }'
+
+# Grant bucket permissions
+curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -X POST http://cafe-1:3903/v1/bucket/allow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bucketId": "BUCKET_ID_FROM_PREVIOUS_RESPONSE",
+    "accessKeyId": "GK88a87e7a792e4e30e54b9d45",
+    "permissions": {
+      "read": true,
+      "write": true,
+      "owner": true
+    }
+  }'
+```
+
+**Finding Admin Token:**
+
+```bash
+ssh mihay42@cafe-1 "cat /opt/garage/garage.toml | grep admin_token"
+```
+
+### Quick Reference
+
+#### Garage CLI Commands
+
+| Task | Command |
+|------|---------|
+| Create key | `docker exec garage /garage key create <name>` |
+| Grant bucket creation | `docker exec garage /garage key allow --create-bucket <key-id>` |
+| Create bucket | `docker exec garage /garage bucket create <bucket-name>` |
+| Grant permissions | `docker exec garage /garage bucket allow --read --write --owner <bucket> --key <key-name>` |
+| View key info | `docker exec garage /garage key info <key-name>` |
+| View bucket info | `docker exec garage /garage bucket info <bucket-name>` |
+| List buckets | `docker exec garage /garage bucket list` |
+| List keys | `docker exec garage /garage key list` |
+
+#### Admin API (Node.js fetch) - Automation
+
+**Note:** Requires `admin_token` from `garage.toml`. Find it with:
+```bash
+ssh mihay42@cafe-1 "docker exec garage cat /etc/garage.toml | grep admin_token"
+```
+
+**Setup Admin API Client:**
+```typescript
+// src/services/admin.service.ts
+export class GarageAdminService {
+  private endpoint: string;
+  private token: string;
+
+  constructor() {
+    this.endpoint = process.env.GARAGE_ADMIN_ENDPOINT || 'http://cafe-1:3903';
+    this.token = process.env.GARAGE_ADMIN_TOKEN!;
+  }
+
+  private async request(path: string, options: RequestInit = {}) {
+    const response = await fetch(`${this.endpoint}${path}`, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${this.token}`,
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Admin API error: ${response.status} - ${error}`);
+    }
+
+    return response.json();
+  }
+
+  // Create a new access key
+  async createKey(name: string) {
+    const result = await this.request('/v2/CreateKey', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    return {
+      accessKeyId: result.accessKeyId,
+      secretAccessKey: result.secretAccessKey,
+      name: result.name,
+    };
+  }
+
+  // Update key permissions (grant bucket creation)
+  async updateKeyPermissions(accessKeyId: string, permissions: {
+    createBucket?: boolean;
+  }) {
+    return await this.request(`/v2/UpdateKey?id=${encodeURIComponent(accessKeyId)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        allow: {
+          createBucket: permissions.createBucket,
+        },
+      }),
+    });
+  }
+
+  // Get key information
+  async getKey(search: string) {
+    return await this.request(`/v2/GetKeyInfo?search=${encodeURIComponent(search)}`);
+  }
+
+  // Get key by ID
+  async getKeyById(id: string) {
+    return await this.request(`/v2/GetKeyInfo?id=${encodeURIComponent(id)}`);
+  }
+
+  // List all keys
+  async listKeys() {
+    return await this.request('/v2/ListKeys');
+  }
+
+  // Create a bucket
+  async createBucket(name: string) {
+    const result = await this.request('/v2/CreateBucket', {
+      method: 'POST',
+      body: JSON.stringify({
+        globalAlias: name,
+      }),
+    });
+    return {
+      id: result.id,
+      globalAlias: result.globalAliases?.[0],
+    };
+  }
+
+  // Grant bucket permissions to a key
+  async allowBucketAccess(bucketId: string, accessKeyId: string, permissions: {
+    read?: boolean;
+    write?: boolean;
+    owner?: boolean;
+  }) {
+    return await this.request('/v2/AllowBucketKey', {
+      method: 'POST',
+      body: JSON.stringify({
+        bucketId,
+        accessKeyId,
+        permissions,
+      }),
+    });
+  }
+
+  // Get bucket info by global alias
+  async getBucket(globalAlias: string) {
+    return await this.request(`/v2/GetBucketInfo?globalAlias=${encodeURIComponent(globalAlias)}`);
+  }
+
+  // Get bucket info by ID
+  async getBucketById(id: string) {
+    return await this.request(`/v2/GetBucketInfo?id=${encodeURIComponent(id)}`);
+  }
+
+  // List all buckets
+  async listBuckets() {
+    return await this.request('/v2/ListBuckets');
+  }
+
+  // Get cluster status
+  async getClusterStatus() {
+    return await this.request('/v2/GetClusterStatus');
+  }
+
+  // Get cluster health
+  async getClusterHealth() {
+    return await this.request('/v2/GetClusterHealth');
+  }
+
+  // Get cluster layout
+  async getClusterLayout() {
+    return await this.request('/v2/GetClusterLayout');
+  }
+}
+```
+
+**Usage Examples:**
+
+**Create Key and Grant Permissions (Full Automation):**
+```typescript
+import { GarageAdminService } from './services/admin.service';
+
+async function provisionNewApplication(appName: string) {
+  const admin = new GarageAdminService();
+
+  // 1. Create a new access key
+  const key = await admin.createKey(`${appName}-key`);
+  console.log('Created key:', key.accessKeyId);
+  console.log('Secret:', key.secretAccessKey);
+
+  // 2. Grant bucket creation permission
+  await admin.updateKeyPermissions(key.accessKeyId, {
+    createBucket: true,
+  });
+  console.log('Granted bucket creation permission');
+
+  // 3. Create application bucket
+  const bucket = await admin.createBucket(`${appName}-data`);
+  console.log('Created bucket:', bucket.globalAlias);
+
+  // 4. Grant full permissions to the key
+  await admin.allowBucketAccess(bucket.id, key.accessKeyId, {
+    read: true,
+    write: true,
+    owner: true,
+  });
+  console.log('Granted bucket permissions');
+
+  return {
+    accessKeyId: key.accessKeyId,
+    secretAccessKey: key.secretAccessKey,
+    bucketName: bucket.globalAlias,
+  };
+}
+
+// Use it:
+const credentials = await provisionNewApplication('my-app');
+// Save credentials to your application's config
+```
+
+**Create User-Specific Bucket:**
+```typescript
+async function provisionUserStorage(userId: string) {
+  const admin = new GarageAdminService();
+  
+  // Create user bucket
+  const bucketName = `user-${userId}`;
+  const bucket = await admin.createBucket(bucketName);
+  
+  // Grant permissions to existing application key
+  const appKeyId = process.env.GARAGE_ACCESS_KEY_ID!;
+  await admin.allowBucketAccess(bucket.id, appKeyId, {
+    read: true,
+    write: true,
+    owner: true,
+  });
+  
+  return bucketName;
+}
+```
+
+**Check Cluster Health:**
+```typescript
+async function checkClusterHealth() {
+  const admin = new GarageAdminService();
+  const health = await admin.getClusterHealth();
+  
+  return {
+    status: health.status, // 'healthy', 'degraded', or 'unavailable'
+    connectedNodes: health.connectedNodes,
+    totalNodes: health.knownNodes,
+    storageNodesUp: health.storageNodesUp,
+    totalStorageNodes: health.storageNodes,
+  };
+}
+```
+
+**Express Endpoint for Automated Provisioning:**
+```typescript
+// Admin endpoint to provision new tenant
+app.post('/api/admin/provision-tenant', async (req, res) => {
+  try {
+    const { tenantId } = req.body;
+    
+    const admin = new GarageAdminService();
+    
+    // Create tenant-specific key
+    const key = await admin.createKey(`tenant-${tenantId}`);
+    
+    // Create tenant bucket
+    const bucket = await admin.createBucket(`tenant-${tenantId}-data`);
+    
+    // Grant permissions
+    await admin.allowBucketAccess(bucket.id, key.accessKeyId, {
+      read: true,
+      write: true,
+      owner: true,
+    });
+    
+    // Store credentials in your database (encrypted!)
+    await db.tenants.update(tenantId, {
+      garageKeyId: key.accessKeyId,
+      garageSecret: encrypt(key.secretAccessKey),
+      garageBucket: bucket.globalAlias,
+    });
+    
+    res.json({
+      success: true,
+      tenantId,
+      bucketName: bucket.globalAlias,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+```
+
+**Full Admin API Documentation:** [Garage Admin API Reference](https://garagehq.deuxfleurs.fr/documentation/reference-manual/admin-api/)
+
+#### AWS CLI Commands
+
+**Note:** Requires AWS CLI configured with Garage credentials (see `.aws/config` and `.aws/credentials` setup above).
+
+| Task | AWS CLI Command |
+|------|-----------------|
+| Create bucket | `aws s3 mb s3://my-bucket` |
+| List buckets | `aws s3 ls` |
+| Upload file | `aws s3 cp file.txt s3://my-bucket/` |
+| Download file | `aws s3 cp s3://my-bucket/file.txt ./` |
+| List objects | `aws s3 ls s3://my-bucket/` |
+| Delete object | `aws s3 rm s3://my-bucket/file.txt` |
+| Sync directory | `aws s3 sync ./local-dir s3://my-bucket/remote-dir/` |
+| Get object metadata | `aws s3api head-object --bucket my-bucket --key file.txt` |
+
+**Note:** AWS CLI **cannot** create keys or manage bucket permissions - use Garage CLI or Admin API for those operations.
+
+#### Node.js (AWS SDK v3) Code Examples
+
+**Create/Check Bucket:**
+```typescript
+import { S3Client, CreateBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+
+const s3 = new S3Client({
+  endpoint: 'http://cafe-1:3900',
+  region: 'garage',
+  credentials: {
+    accessKeyId: 'GK...',
+    secretAccessKey: '...',
+  },
+  forcePathStyle: true,
+});
+
+// Create bucket (requires key to have createBucket permission)
+await s3.send(new CreateBucketCommand({ Bucket: 'my-bucket' }));
+
+// Check if bucket exists
+try {
+  await s3.send(new HeadBucketCommand({ Bucket: 'my-bucket' }));
+  console.log('Bucket exists');
+} catch (error) {
+  console.log('Bucket does not exist');
+}
+```
+
+**Upload Object:**
+```typescript
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { readFileSync } from 'fs';
+
+const fileContent = readFileSync('./file.txt');
+await s3.send(new PutObjectCommand({
+  Bucket: 'my-bucket',
+  Key: 'file.txt',
+  Body: fileContent,
+  ContentType: 'text/plain',
+}));
+```
+
+**Download Object:**
+```typescript
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+
+const response = await s3.send(new GetObjectCommand({
+  Bucket: 'my-bucket',
+  Key: 'file.txt',
+}));
+
+// Stream to file or buffer
+const chunks = [];
+for await (const chunk of response.Body) {
+  chunks.push(chunk);
+}
+const fileContent = Buffer.concat(chunks);
+```
+
+**List Objects:**
+```typescript
+import { ListObjectsV2Command } from '@aws-sdk/client-s3';
+
+const response = await s3.send(new ListObjectsV2Command({
+  Bucket: 'my-bucket',
+  Prefix: 'folder/',
+  MaxKeys: 100,
+}));
+
+for (const object of response.Contents || []) {
+  console.log(`${object.Key} - ${object.Size} bytes`);
+}
+```
+
+**Delete Object:**
+```typescript
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
+
+await s3.send(new DeleteObjectCommand({
+  Bucket: 'my-bucket',
+  Key: 'file.txt',
+}));
+```
+
+**Generate Presigned URL:**
+```typescript
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+
+// Upload URL (expires in 5 minutes)
+const uploadUrl = await getSignedUrl(
+  s3,
+  new PutObjectCommand({
+    Bucket: 'my-bucket',
+    Key: 'file.txt',
+    ContentType: 'text/plain',
+  }),
+  { expiresIn: 300 }
+);
+
+// Download URL (expires in 1 hour)
+const downloadUrl = await getSignedUrl(
+  s3,
+  new GetObjectCommand({
+    Bucket: 'my-bucket',
+    Key: 'file.txt',
+  }),
+  { expiresIn: 3600 }
+);
+```
+
+**Admin Operations (using Admin API from Node.js):**
+```typescript
+// Create key via Admin API
+const createKeyResponse = await fetch('http://cafe-1:3903/v1/key', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${adminToken}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ name: 'my-app-key' }),
+});
+const keyData = await createKeyResponse.json();
+console.log('Key ID:', keyData.accessKeyId);
+console.log('Secret:', keyData.secretAccessKey);
+
+// Grant bucket permissions via Admin API
+await fetch('http://cafe-1:3903/v1/bucket/allow', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${adminToken}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    bucketId: 'bucket-id-here',
+    accessKeyId: keyData.accessKeyId,
+    permissions: {
+      read: true,
+      write: true,
+      owner: true,
+    },
+  }),
+});
+```
+
+**Note:** Node.js AWS SDK **cannot** manage keys or bucket permissions directly - use `fetch()` to call the Garage Admin API for those operations.
+
+### Next Steps
+
+Once you've completed these prerequisites:
+1. ✅ Access key created with bucket creation permission
+2. ✅ Buckets created and permissions granted
+3. ✅ Credentials saved in `.env` file
+
+You're ready to proceed with the Node.js integration below.
 
 ## Architecture Overview
 

@@ -1,4 +1,6 @@
 import type { NodeConfig, ClusterConfig } from "../wizard.ts";
+
+export type { ClusterConfig };
 import { DockerManager } from "../docker/manager.ts";
 import type { DisplayManager } from "../ui/display.ts";
 import type { CleanupManager } from "../cleanup.ts";

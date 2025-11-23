@@ -25,7 +25,8 @@ export class Logger {
       await Deno.writeTextFile(this.logFile, logLine, { append: true });
     } catch (error) {
       // Silently fail if we can't write to log file
-      console.error(`Failed to write to log file: ${error.message}`);
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error(`Failed to write to log file: ${err.message}`);
     }
   }
 

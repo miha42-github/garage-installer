@@ -280,18 +280,16 @@ export class Wizard {
         };
         
         // Prompt for passwords if using password auth (not saved in state)
-        if (this.node1.authMethod === "password") {
-          const password = await Input.prompt({
+        if (this.node1 && this.node1.authMethod === "password") {
+          const password = await Secret.prompt({
             message: `Password for ${this.node1.username}@${this.node1.host}:`,
-            type: "password",
           });
           this.node1.password = password;
         }
         
-        if (this.node2.authMethod === "password") {
-          const password = await Input.prompt({
+        if (this.node2 && this.node2.authMethod === "password") {
+          const password = await Secret.prompt({
             message: `Password for ${this.node2.username}@${this.node2.host}:`,
-            type: "password",
           });
           this.node2.password = password;
         }
@@ -739,14 +737,15 @@ export class Wizard {
       default: Deno.env.get("USER") || "ubuntu",
     });
 
-    const authMethod1 = await Select.prompt({
+    const authMethodRaw = await Select.prompt({
       message: "Authentication method:",
       options: [
         { name: "SSH Key", value: "key" },
         { name: "Password", value: "password" },
       ],
       default: "key",
-    }) as "key" | "password";
+    });
+    const authMethod1 = authMethodRaw as "key" | "password";
 
     let keyPath1: string | undefined;
     let password1: string | undefined;
@@ -808,10 +807,11 @@ export class Wizard {
             continue;
           }
           keyValid = true;
-        } catch (error: any) {
-          if (error.message === "SSH key validation failed") throw error;
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          if (err.message === "SSH key validation failed") throw error;
           console.log(red(`\n  ✗ Cannot read key file: ${keyPath1}`));
-          console.log(yellow(`    Error: ${error.message}`));
+          console.log(yellow(`    Error: ${err.message}`));
           const retry = await Confirm.prompt({
             message: "Try a different key path?",
             default: true,
@@ -820,9 +820,8 @@ export class Wizard {
         }
       }
     } else {
-      password1 = await Input.prompt({
+      password1 = await Secret.prompt({
         message: "SSH password:",
-        mask: "*",
       });
     }
 
@@ -960,13 +959,14 @@ export class Wizard {
         default: username1,
       });
 
-      const authMethod2 = await Select.prompt({
+      const authMethodRaw2 = await Select.prompt({
         message: "Authentication method:",
         options: [
           { name: "SSH Key", value: "key" },
           { name: "Password", value: "password" },
         ],
-      }) as "key" | "password";
+      });
+      const authMethod2 = authMethodRaw2 as "key" | "password";
 
       let keyPath2: string | undefined;
       let password2: string | undefined;
@@ -1028,10 +1028,11 @@ export class Wizard {
               continue;
             }
             keyValid = true;
-          } catch (error: any) {
-            if (error.message === "SSH key validation failed") throw error;
+          } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            if (err.message === "SSH key validation failed") throw error;
             console.log(red(`\n  ✗ Cannot read key file: ${keyPath2}`));
-            console.log(yellow(`    Error: ${error.message}`));
+            console.log(yellow(`    Error: ${err.message}`));
             const retry = await Confirm.prompt({
               message: "Try a different key path?",
               default: true,
@@ -1040,9 +1041,8 @@ export class Wizard {
           }
         }
       } else {
-        password2 = await Input.prompt({
+        password2 = await Secret.prompt({
           message: "SSH password:",
-          mask: "*",
         });
       }
 
@@ -1080,7 +1080,7 @@ export class Wizard {
 
   private async runPreflightChecks() {
     const nodes = [this.node1!, this.node2!];
-    const manualInterventionNeeded: Array<{node: NodeConfig, failures: any[]}> = [];
+    const manualInterventionNeeded: Array<{node: NodeConfig, failures: Error[]}> = [];
 
     for (const node of nodes) {
       console.log(`\nChecking ${bold(node.name)}...`);
@@ -1106,8 +1106,9 @@ export class Wizard {
               console.log(`  Fixing: ${failure.name}...`);
               await failure.autoFix(node.connection!);
               console.log(green(`  ✓ Fixed: ${failure.name}`));
-            } catch (error: any) {
-              if (error.message === "MANUAL_INTERVENTION_REQUIRED") {
+            } catch (error) {
+              const err = error instanceof Error ? error : new Error(String(error));
+              if (err.message === "MANUAL_INTERVENTION_REQUIRED") {
                 needsManualIntervention = true;
                 manualFailures.push(failure);
               } else {
@@ -1160,7 +1161,7 @@ export class Wizard {
     console.log(green("\n✓ All preflight checks passed"));
   }
 
-  private async handleManualIntervention(interventions: Array<{node: NodeConfig, failures: any[]}>) {
+  private async handleManualIntervention(interventions: Array<{node: NodeConfig, failures: Error[]}>) {
     console.log(yellow("\n" + "=".repeat(70)));
     console.log(yellow("⚠️  MANUAL INTERVENTION REQUIRED"));
     console.log(yellow("=".repeat(70)));
@@ -1256,7 +1257,7 @@ export class Wizard {
     console.log("  Testing node1 -> node2...");
     try {
       // Try to ping the other node (1 packet, 5 second timeout)
-      let result = await this.node1!.connection!.exec(
+      const result = await this.node1!.connection!.exec(
         `ping -c 1 -W 5 ${this.node2!.host} 2>&1`,
         10000 // 10 second timeout
       );
@@ -1282,15 +1283,16 @@ export class Wizard {
       } else {
         console.log(green("  ✓ node1 can reach node2"));
       }
-    } catch (error: any) {
-      console.log(red(`  ✖ Error testing connectivity: ${error.message}`));
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.log(red(`  ✖ Error testing connectivity: ${err.message}`));
       return false;
     }
 
     console.log("  Testing node2 -> node1...");
     try {
       // Try to ping the other node
-      let result = await this.node2!.connection!.exec(
+      const result = await this.node2!.connection!.exec(
         `ping -c 1 -W 5 ${this.node1!.host} 2>&1`,
         10000
       );
@@ -1315,8 +1317,9 @@ export class Wizard {
       } else {
         console.log(green("  ✓ node2 can reach node1"));
       }
-    } catch (error: any) {
-      console.log(red(`  ✖ Error testing connectivity: ${error.message}`));
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.log(red(`  ✖ Error testing connectivity: ${err.message}`));
       return false;
     }
 
@@ -1370,11 +1373,11 @@ export class Wizard {
       default: false,
     });
 
-    let dataDir = DEFAULT_PATHS.dataDir;
-    let metaDir = DEFAULT_PATHS.metaDir;
-    let workdir = DEFAULT_PATHS.workdir;
+    let dataDir: string = DEFAULT_PATHS.dataDir;
+    let metaDir: string = DEFAULT_PATHS.metaDir;
+    let workdir: string = DEFAULT_PATHS.workdir;
     let garageVersion = DEFAULT_GARAGE_VERSION;
-    let ports = { ...DEFAULT_PORTS };
+    const ports: { s3Api: number; rpc: number; s3Web: number; admin: number } = { ...DEFAULT_PORTS };
 
     if (advancedConfig) {
       console.log(cyan("\n--- Advanced Configuration ---\n"));
@@ -1629,10 +1632,11 @@ s3 =
         );
       });
       
-    } catch (error: any) {
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       console.log(red(bold("\n✖ Post-install validation failed")));
       console.log(yellow("\nNote: The cluster may still be functional. You can test manually later."));
-      console.log(dim(`\nError: ${error.message}`));
+      console.log(dim(`\nError: ${err.message}`));
     } finally {
       // Cleanup temp config
       try {
@@ -1829,8 +1833,9 @@ s3 =
             if (!accessKey || !secretKey) {
               throw new Error(`API response missing credentials. Got: ${responseBody.substring(0, 100)}`);
             }
-          } catch (parseError: any) {
-            throw new Error(`Invalid JSON response from Admin API: ${parseError.message}. Response: ${responseBody.substring(0, 200)}`);
+          } catch (parseError) {
+            const err = parseError instanceof Error ? parseError : new Error(String(parseError));
+            throw new Error(`Invalid JSON response from Admin API: ${err.message}. Response: ${responseBody.substring(0, 200)}`);
           }
         });
 
@@ -1977,9 +1982,10 @@ s3 =
       this.showAWSCLISetup(endpoint);
       
       await logger.info("Validation completed successfully");
-    } catch (error: any) {
-      await logger.error("Validation failed", { error: error.message, stack: error.stack });
-      console.error(red(bold("\n✖ Validation failed:")), error.message);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      await logger.error("Validation failed", { error: err.message, stack: err.stack });
+      console.error(red(bold("\n✖ Validation failed:")), err.message);
       throw error;
     } finally {
       // Cleanup temp config
@@ -2026,7 +2032,7 @@ s3 =
           stderr: "piped",
         });
         
-        const { success, stderr, stdout } = await uploadCmd.output();
+        const { success, stderr, stdout: _stdout } = await uploadCmd.output();
         if (!success) {
           const errorMsg = new TextDecoder().decode(stderr);
           console.log(red(`\nAWS CLI Error Details:`));
@@ -2105,14 +2111,15 @@ s3 =
       console.log(dim("  • File download: ✓"));
       console.log(dim("  • Content verification: ✓"));
       
-    } catch (error: any) {
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       console.log(red(bold("\n✖ Validation test failed")));
       console.log(yellow("\nPossible issues:"));
       console.log(dim("  • Endpoint not reachable from this machine"));
       console.log(dim("  • Invalid credentials"));
       console.log(dim("  • Bucket doesn't exist or lacks write permissions"));
       console.log(dim("  • Network/firewall blocking access"));
-      console.log(dim(`\nError: ${error.message}`));
+      console.log(dim(`\nError: ${err.message}`));
       throw error;
     }
   }
@@ -2210,7 +2217,7 @@ s3 =
     }
 
     // Check if it's a known good version
-    if (!KNOWN_GOOD_VERSIONS.includes(version as any)) {
+    if (!(KNOWN_GOOD_VERSIONS as readonly string[]).includes(version)) {
       console.log(yellow(`\n  ℹ Note: Version ${version} is not in the list of tested versions.`));
       console.log(yellow(`    Known stable versions: ${KNOWN_GOOD_VERSIONS.join(', ')}`));
       console.log(yellow(`    This version may work but hasn't been extensively tested with this installer.`));
