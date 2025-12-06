@@ -58,7 +58,6 @@ async function main() {
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     console.error(red("\n✖ Fatal error:"), err.message);
-    console.error("\nStack trace:", err.stack);
     Deno.exit(1);
   }
 }

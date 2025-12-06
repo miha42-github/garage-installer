@@ -1072,10 +1072,31 @@ export class Wizard {
       await withSpinner(
         `Connecting to ${node.name} (${node.host})`,
         async () => {
-          const ssh = new SSHConnection(node);
-          await ssh.connect();
-          await ssh.test();
-          node.connection = ssh;
+          try {
+            const ssh = new SSHConnection(node);
+            await ssh.connect();
+            await ssh.test();
+            node.connection = ssh;
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            
+            // Provide helpful error messages for hostname/connection issues
+            if (errorMsg.includes("ENOTFOUND") || errorMsg.includes("getaddrinfo")) {
+              throw new Error(
+                `Failed to connect to node "${node.name}":\n\n` +
+                `  The hostname could not be resolved or the connection failed.\n` +
+                `  Please verify:\n` +
+                `    • Hostname is spelled correctly: "${node.host}"\n` +
+                `    • Node is reachable from this machine\n` +
+                `    • SSH access is configured properly\n` +
+                `    • Network connectivity is available\n\n` +
+                `  Original error: ${errorMsg}`
+              );
+            }
+            
+            // Re-throw original error for other cases
+            throw error;
+          }
         }
       );
     }
@@ -1519,20 +1540,21 @@ export class Wizard {
   }
 
   private async postInstall() {
-    console.log("\nSaving configuration...");
+    console.log("\n" + bold(cyan("=== Phase 7: Finalizing ===")));
     
-    const configFile = "./garage-cluster-config.json";
-    const config = {
-      nodes: [
-        { name: this.node1!.name, host: this.node1!.host },
-        { name: this.node2!.name, host: this.node2!.host },
-      ],
-      cluster: this.clusterConfig,
-      installedAt: new Date().toISOString(),
-    };
+    await withSpinner("Saving configuration", async () => {
+      const configFile = "./garage-cluster-config.json";
+      const config = {
+        nodes: [
+          { name: this.node1!.name, host: this.node1!.host },
+          { name: this.node2!.name, host: this.node2!.host },
+        ],
+        cluster: this.clusterConfig,
+        installedAt: new Date().toISOString(),
+      };
 
-    await Deno.writeTextFile(configFile, JSON.stringify(config, null, 2));
-    console.log(green(`✓ Configuration saved to ${configFile}`));
+      await Deno.writeTextFile(configFile, JSON.stringify(config, null, 2));
+    });
 
     // Ask if user wants to run validation test
     console.log("");

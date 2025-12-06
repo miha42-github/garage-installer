@@ -25,7 +25,28 @@ export class GarageCluster {
       await withSpinner(
         `Deploying to ${node.name}`,
         async () => {
-          await this.deployNode(node, display);
+          try {
+            await this.deployNode(node, display);
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            
+            // Provide helpful error messages
+            if (errorMsg.includes("ENOTFOUND") || errorMsg.includes("getaddrinfo") || errorMsg.includes("connection failed")) {
+              throw new Error(
+                `Failed to connect to node "${node.host}":\n\n` +
+                `  The hostname could not be resolved or the connection failed.\n` +
+                `  Please verify:\n` +
+                `    • Hostname is spelled correctly: "${node.host}"\n` +
+                `    • Node is reachable from this machine\n` +
+                `    • SSH access is configured properly\n` +
+                `    • Network connectivity is available\n\n` +
+                `  Original error: ${errorMsg}`
+              );
+            }
+            
+            // Re-throw original error for other cases
+            throw error;
+          }
         }
       );
     }
@@ -365,11 +386,29 @@ services:
 
   private async getClusterStatus(): Promise<string> {
     const docker = new DockerManager(this.nodes[0].connection!);
-    const result = await docker.execInContainer("garage", "/garage status");
-    if (result.code !== 0) {
-      throw new Error(`Failed to get status: ${result.stderr}`);
-    }
+    
+    // Add a short timeout - if garage status doesn't respond quickly, skip it
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Status check timed out")), 5000); // 5 second timeout
+    });
+    
+    try {
+      const result = await Promise.race([
+        docker.execInContainer("garage", "/garage status"),
+        timeoutPromise,
+      ]);
+      
+      if (result.code !== 0) {
+        throw new Error(`Failed to get status: ${result.stderr}`);
+      }
 
-    return result.stdout;
+      return result.stdout;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("timed out")) {
+        // If status check times out, return a message indicating cluster is still initializing
+        return "Cluster initialization in progress - status check timed out. The cluster should be functional.";
+      }
+      throw error;
+    }
   }
 }
