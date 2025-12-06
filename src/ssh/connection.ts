@@ -27,20 +27,40 @@ export class SSHConnection {
     return `${this.config.username}@${this.config.host}:${this.config.port}`;
   }
 
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const connectionConfig: any = {
+      const connectionConfig: Record<string, unknown> = {
         host: this.config.host,
         port: this.config.port,
         username: this.config.username,
         readyTimeout: this.defaultTimeout,
-        // Use only ciphers fully supported in Deno's Node.js compatibility layer
+        // Cipher support for maximum compatibility with various SSH server configurations
+        // See: https://github.com/mscdex/ssh2#client-methods
         algorithms: {
           cipher: [
+            // Modern ciphers (preferred)
+            'chacha20-poly1305@openssh.com',
+            'aes128-gcm@openssh.com',
+            'aes256-gcm@openssh.com',
+            // Standard counter modes
             'aes128-ctr',
+            'aes192-ctr',
             'aes256-ctr',
+            // CBC modes (less preferred but widely available)
             'aes128-cbc',
+            'aes192-cbc',
             'aes256-cbc',
+            // Legacy support
+            '3des-cbc',
+          ],
+          serverHostKey: [
+            'ssh-rsa',
+            'rsa-sha2-512',
+            'rsa-sha2-256',
+            'ecdsa-sha2-nistp256',
+            'ecdsa-sha2-nistp384',
+            'ecdsa-sha2-nistp521',
+            'ssh-ed25519',
           ],
         },
       };
@@ -49,9 +69,10 @@ export class SSHConnection {
         try {
           const keyData = Deno.readTextFileSync(this.config.keyPath!);
           connectionConfig.privateKey = keyData;
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           reject(new Error(
-            `[${this.getConnectionContext()}] Failed to read SSH key from ${this.config.keyPath}: ${error.message}`
+            `[${this.getConnectionContext()}] Failed to read SSH key from ${this.config.keyPath}: ${errorMsg}`
           ));
           return;
         }
@@ -64,9 +85,10 @@ export class SSHConnection {
         resolve();
       });
 
-      this.client.on("error", (err: any) => {
+      this.client.on("error", (err: unknown) => {
+        const errorMsg = err instanceof Error ? err.message : String(err);
         reject(new Error(
-          `[${this.getConnectionContext()}] SSH connection failed: ${err.message}`
+          `[${this.getConnectionContext()}] SSH connection failed: ${errorMsg}`
         ));
       });
 
@@ -80,7 +102,7 @@ export class SSHConnection {
     });
   }
 
-  async exec(command: string, timeoutMs?: number): Promise<ExecResult> {
+  exec(command: string, timeoutMs?: number): Promise<ExecResult> {
     if (!this.connected) {
       throw new Error(`[${this.getConnectionContext()}] Not connected`);
     }
@@ -98,34 +120,36 @@ export class SSHConnection {
         ));
       }, timeout);
 
-      this.client.exec(command, (err: any, stream: any) => {
+      this.client.exec(command, (err: unknown, stream: unknown) => {
         if (err) {
           clearTimeout(timeoutHandle);
+          const errorMsg = err instanceof Error ? err.message : String(err);
           reject(new Error(
-            `[${this.getConnectionContext()}] Exec failed: ${err.message}`
+            `[${this.getConnectionContext()}] Exec failed: ${errorMsg}`
           ));
           return;
         }
 
         let stdout = "";
         let stderr = "";
-
-        stream.on("close", (code: number) => {
+        (stream as unknown as { on(event: string, listener: (code?: number) => void): void }).on("close", (code?: number) => {
           clearTimeout(timeoutHandle);
           if (!timedOut) {
-            const result = { stdout, stderr, code };
+            const result = { stdout, stderr, code: code ?? 0 };
             // Log the command execution
             this.logger.command(`[${this.config.name}] ${command}`, result).catch(() => {});
             resolve(result);
           }
         });
 
-        stream.on("data", (data: Uint8Array) => {
+        (stream as unknown as { on(event: string, listener: (data: Uint8Array) => void): void }).on("data", (data: Uint8Array) => {
           stdout += new TextDecoder().decode(data);
         });
 
-        stream.stderr.on("data", (data: Uint8Array) => {
-          stderr += new TextDecoder().decode(data);
+        (stream as unknown as { stderr: { on(event: string, listener: (data?: Uint8Array) => void): void } }).stderr.on("data", (data?: Uint8Array) => {
+          if (data) {
+            stderr += new TextDecoder().decode(data);
+          }
         });
       });
     });
@@ -149,23 +173,25 @@ export class SSHConnection {
     const fileData = await Deno.readFile(localPath);
 
     return new Promise((resolve, reject) => {
-      this.client.sftp((err: any, sftp: any) => {
+      this.client.sftp((err: unknown, sftp: unknown) => {
         if (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
           reject(new Error(
-            `[${this.getConnectionContext()}] SFTP failed: ${err.message}`
+            `[${this.getConnectionContext()}] SFTP failed: ${errorMsg}`
           ));
           return;
         }
 
-        const writeStream = sftp.createWriteStream(remotePath);
+        const writeStream = (sftp as unknown as { createWriteStream(path: string): { on(event: string, listener: () => void): void; write(data: Uint8Array): void; end(): void } }).createWriteStream(remotePath);
 
         writeStream.on("close", () => {
           resolve();
         });
 
-        writeStream.on("error", (error: any) => {
+        writeStream.on("error", (error?: unknown) => {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           reject(new Error(
-            `[${this.getConnectionContext()}] Upload failed (${localPath} -> ${remotePath}): ${error.message}`
+            `[${this.getConnectionContext()}] Upload failed (${localPath} -> ${remotePath}): ${errorMsg}`
           ));
         });
 
@@ -176,25 +202,28 @@ export class SSHConnection {
     });
   }
 
-  async downloadFile(remotePath: string, localPath: string): Promise<void> {
+  downloadFile(remotePath: string, localPath: string): Promise<void> {
     if (!this.connected) {
       throw new Error(`[${this.getConnectionContext()}] Not connected`);
     }
 
     return new Promise((resolve, reject) => {
-      this.client.sftp((err: any, sftp: any) => {
+      this.client.sftp((err: unknown, sftp: unknown) => {
         if (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
           reject(new Error(
-            `[${this.getConnectionContext()}] SFTP failed: ${err.message}`
+            `[${this.getConnectionContext()}] SFTP failed: ${errorMsg}`
           ));
           return;
         }
 
-        const readStream = sftp.createReadStream(remotePath);
+        const readStream = (sftp as unknown as { createReadStream(path: string): { on(event: string, listener: (chunk?: Uint8Array) => void): void } }).createReadStream(remotePath);
         const chunks: Uint8Array[] = [];
 
-        readStream.on("data", (chunk: Uint8Array) => {
-          chunks.push(chunk);
+        readStream.on("data", (chunk?: Uint8Array) => {
+          if (chunk) {
+            chunks.push(chunk);
+          }
         });
 
         readStream.on("close", () => {
@@ -209,9 +238,10 @@ export class SSHConnection {
           resolve();
         });
 
-        readStream.on("error", (error: any) => {
+        readStream.on("error", (error: unknown) => {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           reject(new Error(
-            `[${this.getConnectionContext()}] Download failed (${remotePath} -> ${localPath}): ${error.message}`
+            `[${this.getConnectionContext()}] Download failed (${remotePath} -> ${localPath}): ${errorMsg}`
           ));
         });
       });
@@ -242,7 +272,7 @@ EOF_MARKER`;
     }
   }
 
-  async close(): Promise<void> {
+  close(): void {
     if (this.connected) {
       this.client.end();
       this.connected = false;

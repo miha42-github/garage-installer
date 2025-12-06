@@ -1,41 +1,14 @@
 import type { SSHConnection } from "../ssh/connection.ts";
 
 export class DockerManager {
-  private useSudo: boolean = false;
-
   constructor(private ssh: SSHConnection) {}
 
   /**
-   * Check if we need to use sudo for docker commands
-   */
-  async detectSudoRequirement(): Promise<void> {
-    // Try docker without sudo first
-    const result = await this.ssh.exec("docker ps 2>&1");
-    
-    if (result.code === 0) {
-      this.useSudo = false;
-      return;
-    }
-
-    // If it failed with permission denied, try with sudo -n (passwordless)
-    if (result.stderr.includes("permission denied") || result.stdout.includes("permission denied")) {
-      const sudoResult = await this.ssh.exec("sudo -n docker ps 2>&1");
-      if (sudoResult.code === 0) {
-        this.useSudo = true;
-        return;
-      }
-    }
-
-    // If both failed, don't use sudo (will fail with better error message)
-    this.useSudo = false;
-  }
-
-  /**
-   * Execute a docker command, automatically adding sudo if needed
+   * Execute a docker command
+   * NOTE: Assumes user is already in docker group or has docker access configured
    */
   private async dockerExec(command: string): Promise<{ stdout: string; stderr: string; code: number }> {
-    const fullCommand = this.useSudo ? `sudo -n ${command}` : command;
-    return await this.ssh.exec(fullCommand);
+    return await this.ssh.exec(command);
   }
 
   async pullImage(image: string): Promise<void> {

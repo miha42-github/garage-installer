@@ -31,11 +31,8 @@ export class GarageCluster {
     }
   }
 
-  private async deployNode(node: NodeConfig, display: DisplayManager): Promise<void> {
+  private async deployNode(node: NodeConfig, _display: DisplayManager): Promise<void> {
     const docker = new DockerManager(node.connection!);
-    
-    // Detect if we need sudo for docker commands
-    await docker.detectSudoRequirement();
 
     // Step 1: Pull image
     await docker.pullImage(`dxflrs/garage:${this.config.garageVersion}`);
@@ -47,10 +44,10 @@ export class GarageCluster {
     // Step 3: Clean up any existing directories and recreate (in case previous install failed with wrong permissions)
     const workdir = this.config.workdir;
     
-    // Check if directories exist and remove them (handles both user-owned and potentially root-owned from failed installs)
-    await node.connection!.exec(`rm -rf ${workdir} 2>/dev/null || sudo rm -rf ${workdir} 2>/dev/null || true`);
-    await node.connection!.exec(`rm -rf ${this.config.dataDir} 2>/dev/null || sudo rm -rf ${this.config.dataDir} 2>/dev/null || true`);
-    await node.connection!.exec(`rm -rf ${this.config.metaDir} 2>/dev/null || sudo rm -rf ${this.config.metaDir} 2>/dev/null || true`);
+    // Remove existing directories (assumes user ownership)
+    await node.connection!.exec(`rm -rf ${workdir}`);
+    await node.connection!.exec(`rm -rf ${this.config.dataDir}`);
+    await node.connection!.exec(`rm -rf ${this.config.metaDir}`);
     
     // Create fresh directories as current user
     await node.connection!.exec(`mkdir -p ${workdir}`);
@@ -175,7 +172,7 @@ admin_token = "${this.config.adminToken}"
 `.trim();
   }
 
-  private generateDockerCompose(node: NodeConfig, uid: string, gid: string): string {
+  private generateDockerCompose(_node: NodeConfig, uid: string, gid: string): string {
     return `
 services:
   garage:
@@ -194,7 +191,7 @@ services:
 `.trim();
   }
 
-  async configure(display: DisplayManager): Promise<void> {
+  async configure(_display: DisplayManager): Promise<void> {
     console.log("\nConfiguring cluster...\n");
 
     // Get node IDs
@@ -238,7 +235,6 @@ services:
 
     for (const node of this.nodes) {
       const docker = new DockerManager(node.connection!);
-      await docker.detectSudoRequirement();
       const result = await docker.execInContainer("garage", "/garage node id");
       
       if (result.code !== 0) {
@@ -282,7 +278,6 @@ services:
       const node = this.nodes[i];
       const publicIP = i === 0 ? node1IP : node2IP;
       const docker = new DockerManager(node.connection!);
-      await docker.detectSudoRequirement();
 
       // Generate new config with bootstrap peers and resolved IP
       const garageConfig = this.generateGarageConfig(node, bootstrapPeers, publicIP);
@@ -290,18 +285,13 @@ services:
       // Write updated config
       await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
       
-      const uidResult = await node.connection!.exec("id -u");
-      const gidResult = await node.connection!.exec("id -g");
-      const uid = uidResult.stdout.trim();
-      const gid = gidResult.stdout.trim();
-      await node.connection!.exec(`sudo chown ${uid}:${gid} ${workdir}/garage.toml`);
-
       // Restart container to pick up new config
       console.log(dim(`  Restarting ${node.name} with updated config...`));
       try {
         await docker.restartContainer("garage");
-      } catch (error: any) {
-        console.log(yellow(`  Warning: Restart failed (${error.message}), trying stop/start...`));
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.log(yellow(`  Warning: Restart failed (${errorMsg}), trying stop/start...`));
         await docker.stopContainer("garage");
         await new Promise(resolve => setTimeout(resolve, 2000));
         // Container should auto-restart via docker-compose restart policy
@@ -321,7 +311,6 @@ services:
   private async connectNodes(nodeIds: string[]): Promise<void> {
     // Connect node1 to node2
     const docker1 = new DockerManager(this.nodes[0].connection!);
-    await docker1.detectSudoRequirement();
     const connectCmd = `/garage node connect ${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`;
     
     const result = await docker1.execInContainer("garage", connectCmd);
@@ -333,7 +322,6 @@ services:
 
   private async configureLayout(nodeIds: string[]): Promise<void> {
     const docker = new DockerManager(this.nodes[0].connection!);
-    await docker.detectSudoRequirement();
 
     // Assign node1 to zone1
     const assign1Cmd = `/garage layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
@@ -377,9 +365,7 @@ services:
 
   private async getClusterStatus(): Promise<string> {
     const docker = new DockerManager(this.nodes[0].connection!);
-    await docker.detectSudoRequirement();
     const result = await docker.execInContainer("garage", "/garage status");
-    
     if (result.code !== 0) {
       throw new Error(`Failed to get status: ${result.stderr}`);
     }

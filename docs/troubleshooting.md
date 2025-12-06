@@ -6,8 +6,8 @@ This guide provides comprehensive solutions to common issues you might encounter
 
 ## Table of Contents
 - [macOS Security Warning](#macos-security-warning)
-- [Installing Prerequisites](#installing-prerequisites)
 - [SSH Connection Issues](#ssh-connection-issues)
+- [Installing Prerequisites](#installing-prerequisites)
 - [Docker Problems](#docker-problems)
 - [Port Conflicts](#port-conflicts)
 - [Network Connectivity](#network-connectivity)
@@ -60,6 +60,135 @@ The installer is compiled as a standalone Deno binary. To eliminate this warning
 - Notarization process
 
 This is not yet implemented but is planned for future releases.
+
+---
+
+## SSH Connection Issues
+
+### "Unknown cipher" Error
+
+**Problem:**
+```
+✖ Installation failed: [user@host:22] SSH connection failed: Unknown cipher
+```
+
+This occurs when the remote SSH server doesn't support the cipher algorithms that the ssh2 library can negotiate with it.
+
+**Common Causes:**
+- Remote server has very restrictive SSH cipher configuration
+- Server is running very old OpenSSH with limited cipher support
+- Server is running very new OpenSSH with only modern ciphers enabled
+- Network appliance (firewall/proxy) filtering SSH algorithms
+
+**Solution:**
+
+The installer supports a wide range of ciphers including:
+- Modern: `chacha20-poly1305@openssh.com`, `aes128-gcm@openssh.com`, `aes256-gcm@openssh.com`
+- Standard: `aes128-ctr`, `aes192-ctr`, `aes256-ctr`
+- Legacy: `aes128-cbc`, `aes192-cbc`, `aes256-cbc`, `3des-cbc`
+
+**If you still get this error:**
+
+1. **Check remote SSH server ciphers:**
+   ```bash
+   ssh -Q cipher user@remote-host
+   ```
+
+2. **Try connecting with SSH directly first:**
+   ```bash
+   ssh -v user@remote-host
+   ```
+   Look for cipher negotiation in the output (search for "ciphers_allowed").
+
+3. **Ubuntu/Debian - Enable additional ciphers** (if server is too restrictive):
+   ```bash
+   # On the REMOTE server, edit SSH config:
+   sudo nano /etc/ssh/sshd_config
+   
+   # Add this line if restrictive ciphers are set:
+   Ciphers aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes256-cbc,3des-cbc
+   
+   # Restart SSH:
+   sudo systemctl restart ssh
+   ```
+
+4. **Report the issue:**
+   If neither the installer nor direct SSH works, gather information:
+   ```bash
+   ssh -vvv user@remote-host 2>&1 | grep -i cipher
+   ```
+   And open an issue with the cipher names shown.
+
+### SSH Key Not Found
+
+**Problem:**
+```
+Failed to read SSH key from /home/user/.ssh/id_rsa: Permission denied
+```
+
+**Solution:**
+```bash
+# Ensure correct permissions on SSH key
+chmod 600 ~/.ssh/id_rsa
+
+# Ensure .ssh directory is readable
+chmod 700 ~/.ssh
+```
+
+### SSH Connection Timeout
+
+**Problem:**
+```
+SSH connection timeout after 30000ms
+```
+
+**Causes:**
+- Network unreachable to remote host
+- Firewall blocking port 22
+- SSH server not running
+
+**Solution:**
+```bash
+# Check if host is reachable
+ping -c 3 remote-host
+
+# Check if SSH port is open
+nc -zv remote-host 22
+
+# Or with telnet
+telnet remote-host 22
+
+# Test SSH connection directly
+ssh -v user@remote-host
+```
+
+### "Permission denied (publickey)" Error
+
+**Problem:**
+```
+SSH connection failed: Permission denied (publickey)
+```
+
+**Solution:**
+1. Verify SSH key is correct:
+   ```bash
+   ssh -i ~/.ssh/id_rsa user@remote-host
+   ```
+
+2. Check remote `authorized_keys`:
+   ```bash
+   ssh user@remote-host "cat ~/.ssh/authorized_keys"
+   ```
+
+3. Ensure your public key is in `authorized_keys`:
+   ```bash
+   ssh-copy-id -i ~/.ssh/id_rsa user@remote-host
+   ```
+
+4. Check file permissions on remote:
+   ```bash
+   ssh user@remote-host "chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+   ```
 
 ---
 
