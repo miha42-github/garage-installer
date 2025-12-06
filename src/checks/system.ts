@@ -61,7 +61,7 @@ export class SystemChecker {
     return {
       name: "Docker",
       passed: false,
-      message: "Docker not installed - see troubleshooting guide for manual installation\",
+      message: "Docker not installed - see troubleshooting guide for manual installation",
       autoFix: undefined,
     };
   }
@@ -91,8 +91,8 @@ export class SystemChecker {
         passed: false,
         message: inDockerGroup 
           ? "User is in docker group but needs to activate it (re-login required)"
-          : "User not in docker group and sudo requires password",
-        autoFix: async () => {
+          : "User not in docker group - must be added before running installer",
+        autoFix: () => {
           // This will be handled by the wizard with proper prompts
           throw new Error("MANUAL_INTERVENTION_REQUIRED");
         },
@@ -135,13 +135,13 @@ export class SystemChecker {
     const busyPorts: number[] = [];
 
     for (const port of portsToCheck) {
-      // Try without sudo first (ss or netstat)
-      let result = await this.ssh.exec(
+      // Check port availability using ss or netstat
+      const result = await this.ssh.exec(
         `ss -tlnp 2>/dev/null | grep ":${port} " || netstat -tlnp 2>/dev/null | grep ":${port} " || echo ""`
       );
       
       // If command not found or no output, assume port is available
-      // (checking ports without sudo is a best-effort operation)
+      // (checking ports is a best-effort operation)
       if (result.code !== 0 || (result.stdout.trim().length === 0 && result.stderr.includes("not found"))) {
         continue;
       }

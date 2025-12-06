@@ -31,7 +31,7 @@ export class GarageCluster {
     }
   }
 
-  private async deployNode(node: NodeConfig, display: DisplayManager): Promise<void> {
+  private async deployNode(node: NodeConfig, _display: DisplayManager): Promise<void> {
     const docker = new DockerManager(node.connection!);
 
     // Step 1: Pull image
@@ -172,7 +172,7 @@ admin_token = "${this.config.adminToken}"
 `.trim();
   }
 
-  private generateDockerCompose(node: NodeConfig, uid: string, gid: string): string {
+  private generateDockerCompose(_node: NodeConfig, uid: string, gid: string): string {
     return `
 services:
   garage:
@@ -191,7 +191,7 @@ services:
 `.trim();
   }
 
-  async configure(display: DisplayManager): Promise<void> {
+  async configure(_display: DisplayManager): Promise<void> {
     console.log("\nConfiguring cluster...\n");
 
     // Get node IDs
@@ -289,8 +289,9 @@ services:
       console.log(dim(`  Restarting ${node.name} with updated config...`));
       try {
         await docker.restartContainer("garage");
-      } catch (error: any) {
-        console.log(yellow(`  Warning: Restart failed (${error.message}), trying stop/start...`));
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.log(yellow(`  Warning: Restart failed (${errorMsg}), trying stop/start...`));
         await docker.stopContainer("garage");
         await new Promise(resolve => setTimeout(resolve, 2000));
         // Container should auto-restart via docker-compose restart policy
@@ -320,10 +321,10 @@ services:
   }
 
   private async configureLayout(nodeIds: string[]): Promise<void> {
-  private async configureLayout(nodeIds: string[]): Promise<void> {
     const docker = new DockerManager(this.nodes[0].connection!);
 
-    // Assign node1 to zone1age layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
+    // Assign node1 to zone1
+    const assign1Cmd = `/garage layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
     const result1 = await docker.execInContainer("garage", assign1Cmd);
     
     if (result1.code !== 0) {
@@ -362,7 +363,6 @@ services:
     }
   }
 
-  private async getClusterStatus(): Promise<string> {
   private async getClusterStatus(): Promise<string> {
     const docker = new DockerManager(this.nodes[0].connection!);
     const result = await docker.execInContainer("garage", "/garage status");

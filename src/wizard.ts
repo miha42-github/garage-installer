@@ -6,7 +6,7 @@ import { DockerManager } from "./docker/manager.ts";
 import { GarageCluster } from "./garage/cluster.ts";
 import { DisplayManager } from "./ui/display.ts";
 import { CleanupManager } from "./cleanup.ts";
-import { StateManager } from "./state.ts";
+import { StateManager, type InstallationState } from "./state.ts";
 import { withSpinner } from "./ui/spinner.ts";
 import { initLogger, getLogger } from "./logger.ts";
 import {
@@ -225,9 +225,11 @@ export class Wizard {
       // Clear state after successful installation
       await this.stateManager.clear();
 
-    } catch (error: any) {
-      await logger.error("Installation failed", { error: error.message, stack: error.stack });
-      console.error(red(bold("\n✖ Installation failed:")), error.message);
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : "";
+      await logger.error("Installation failed", { error: errorMsg, stack: errorStack });
+      console.error(red(bold("\n✖ Installation failed:")), errorMsg);
       console.error(dim(`\nFor troubleshooting, check the log file: ${logger.getLogPath()}`));
       
       // Mark current phase as failed
@@ -261,7 +263,7 @@ export class Wizard {
     }
   }
 
-  private async resumeInstallation(state: any) {
+  private async resumeInstallation(state: InstallationState) {
     const logger = getLogger();
     await logger.info("=== Resuming Garage Installation ===");
 
@@ -384,9 +386,11 @@ export class Wizard {
       // Clear state after successful installation
       await this.stateManager.clear();
 
-    } catch (error: any) {
-      await logger.error("Installation failed during resume", { error: error.message, stack: error.stack });
-      console.error(red(bold("\n✖ Installation failed:")), error.message);
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : "";
+      await logger.error("Installation failed during resume", { error: errorMsg, stack: errorStack });
+      console.error(red(bold("\n✖ Installation failed:")), errorMsg);
       
       // Mark current phase as failed
       const nextPhase = this.stateManager.getNextPendingPhase();
@@ -617,9 +621,11 @@ export class Wizard {
         console.log(dim("  rm -rf ~/garage/data ~/garage/meta"));
       }
 
-    } catch (error: any) {
-      await logger.error("Uninstallation failed", { error: error.message, stack: error.stack });
-      console.error(red(bold("\n✖ Uninstallation failed:")), error.message);
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : "";
+      await logger.error("Uninstallation failed", { error: errorMsg, stack: errorStack });
+      console.error(red(bold("\n✖ Uninstallation failed:")), errorMsg);
       throw error;
     } finally {
       // Clean up SSH connections

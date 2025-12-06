@@ -72,8 +72,9 @@ export class CleanupManager {
       try {
         await this.cleanupNode(node, nodeState);
         console.log(green(`  ✓ ${node.name} cleaned up`));
-      } catch (error: any) {
-        console.error(red(`  ✖ Failed to clean up ${node.name}: ${error.message}`));
+      } catch (error: unknown) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(red(`  ✖ Failed to clean up ${node.name}: ${errorMsg}`));
       }
     }
   }
