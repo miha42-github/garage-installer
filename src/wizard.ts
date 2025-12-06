@@ -578,7 +578,6 @@ export class Wizard {
         console.log(`\nUninstalling from ${bold(node.name)}...`);
         
         const docker = new DockerManager(node.connection!);
-        await docker.detectSudoRequirement();
 
         // Stop and remove container
         console.log(dim("  Stopping container..."));

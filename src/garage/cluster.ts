@@ -33,9 +33,6 @@ export class GarageCluster {
 
   private async deployNode(node: NodeConfig, display: DisplayManager): Promise<void> {
     const docker = new DockerManager(node.connection!);
-    
-    // Detect if we need sudo for docker commands
-    await docker.detectSudoRequirement();
 
     // Step 1: Pull image
     await docker.pullImage(`dxflrs/garage:${this.config.garageVersion}`);
@@ -47,10 +44,10 @@ export class GarageCluster {
     // Step 3: Clean up any existing directories and recreate (in case previous install failed with wrong permissions)
     const workdir = this.config.workdir;
     
-    // Check if directories exist and remove them (handles both user-owned and potentially root-owned from failed installs)
-    await node.connection!.exec(`rm -rf ${workdir} 2>/dev/null || sudo rm -rf ${workdir} 2>/dev/null || true`);
-    await node.connection!.exec(`rm -rf ${this.config.dataDir} 2>/dev/null || sudo rm -rf ${this.config.dataDir} 2>/dev/null || true`);
-    await node.connection!.exec(`rm -rf ${this.config.metaDir} 2>/dev/null || sudo rm -rf ${this.config.metaDir} 2>/dev/null || true`);
+    // Remove existing directories (assumes user ownership)
+    await node.connection!.exec(`rm -rf ${workdir}`);
+    await node.connection!.exec(`rm -rf ${this.config.dataDir}`);
+    await node.connection!.exec(`rm -rf ${this.config.metaDir}`);
     
     // Create fresh directories as current user
     await node.connection!.exec(`mkdir -p ${workdir}`);
@@ -238,7 +235,6 @@ services:
 
     for (const node of this.nodes) {
       const docker = new DockerManager(node.connection!);
-      await docker.detectSudoRequirement();
       const result = await docker.execInContainer("garage", "/garage node id");
       
       if (result.code !== 0) {
@@ -290,12 +286,6 @@ services:
       // Write updated config
       await node.connection!.writeFile(`${workdir}/garage.toml`, garageConfig);
       
-      const uidResult = await node.connection!.exec("id -u");
-      const gidResult = await node.connection!.exec("id -g");
-      const uid = uidResult.stdout.trim();
-      const gid = gidResult.stdout.trim();
-      await node.connection!.exec(`sudo chown ${uid}:${gid} ${workdir}/garage.toml`);
-
       // Restart container to pick up new config
       console.log(dim(`  Restarting ${node.name} with updated config...`));
       try {

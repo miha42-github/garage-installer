@@ -258,13 +258,13 @@ These items were initially flagged as issues but have been **implemented**:
 ### From REMEDIATION.md (Now Fixed)
 
 1. ✅ **Docker permissions handling** (#1)
-   - Dynamic sudo detection implemented
-   - `DockerManager.detectSudoRequirement()` automatically handles this
-   - **File**: `src/docker/manager.ts`
+   - User must be in docker group before running installer
+   - Clear error messages if docker access is not available
+   - **File**: `src/checks/system.ts`
 
-2. ✅ **Port checking with sudo fallback** (#2)
-   - Tries without sudo first, falls back to sudo if available
-   - Handles missing sudo gracefully
+2. ✅ **Port checking without escalation** (#2)
+   - Best-effort port availability checking
+   - No sudo required (best-effort operation)
    - **File**: `src/checks/system.ts`
 
 3. ✅ **SSH timeout handling** (#3)

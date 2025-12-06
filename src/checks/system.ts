@@ -61,13 +61,8 @@ export class SystemChecker {
     return {
       name: "Docker",
       passed: false,
-      message: "Docker not installed",
-      autoFix: async (ssh) => {
-        // Install Docker using official script
-        await ssh.exec("curl -fsSL https://get.docker.com -o get-docker.sh");
-        await ssh.exec("sudo sh get-docker.sh");
-        await ssh.exec("rm get-docker.sh");
-      },
+      message: "Docker not installed - see troubleshooting guide for manual installation\",
+      autoFix: undefined,
     };
   }
 
@@ -90,24 +85,12 @@ export class SystemChecker {
       const groupCheck = await this.ssh.exec(`groups ${username} | grep docker || echo ""`);
       const inDockerGroup = groupCheck.stdout.includes("docker");
 
-      // Check if sudo docker works (passwordless sudo)
-      const sudoCheck = await this.ssh.exec("sudo -n docker ps 2>&1");
-      
-      if (sudoCheck.code === 0) {
-        console.log("  Note: User not in docker group, but sudo works. Will use 'sudo docker' for this session.");
-        return {
-          name: "Docker Permissions",
-          passed: true,
-          message: "Docker accessible via sudo (user not in docker group)",
-        };
-      }
-
       // Neither direct docker nor sudo docker work - return info for manual intervention
       return {
         name: "Docker Permissions",
         passed: false,
         message: inDockerGroup 
-          ? "User is in docker group but needs to activate it (newgrp docker or re-login)"
+          ? "User is in docker group but needs to activate it (re-login required)"
           : "User not in docker group and sudo requires password",
         autoFix: async () => {
           // This will be handled by the wizard with proper prompts
@@ -157,21 +140,10 @@ export class SystemChecker {
         `ss -tlnp 2>/dev/null | grep ":${port} " || netstat -tlnp 2>/dev/null | grep ":${port} " || echo ""`
       );
       
-      // If command not found or no output, try with sudo
+      // If command not found or no output, assume port is available
+      // (checking ports without sudo is a best-effort operation)
       if (result.code !== 0 || (result.stdout.trim().length === 0 && result.stderr.includes("not found"))) {
-        // Check if sudo is available and doesn't require password
-        const sudoCheck = await this.ssh.exec("sudo -n true 2>&1");
-        
-        if (sudoCheck.code === 0) {
-          // sudo available without password
-          result = await this.ssh.exec(
-            `sudo ss -tlnp 2>/dev/null | grep ":${port} " || sudo netstat -tlnp 2>/dev/null | grep ":${port} " || true`
-          );
-        } else {
-          // Can't check ports reliably without sudo, assume they're free
-          console.log(`  Note: Cannot check port ${port} without sudo. Proceeding with assumption it's available.`);
-          continue;
-        }
+        continue;
       }
       
       if (result.stdout.trim().length > 0) {

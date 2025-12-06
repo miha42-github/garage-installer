@@ -88,7 +88,6 @@ export class CleanupManager {
     }
 
     const docker = new DockerManager(node.connection);
-    await docker.detectSudoRequirement();
 
     // Stop and remove container
     if (state.containerDeployed) {
