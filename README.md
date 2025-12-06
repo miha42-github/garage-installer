@@ -77,7 +77,6 @@ deno task dev
 ```
 
 ### Download
-**WARNING**: Not yet available documentation in this section is not correct.
 
 ```bash
 # Linux
@@ -87,7 +86,14 @@ chmod +x garage-installer-linux-x64
 # macOS
 wget https://github.com/miha42-github/garage-installer/releases/latest/download/garage-installer-macos-x64
 chmod +x garage-installer-macos-x64
+# On first run, macOS may block execution. If so, run:
+# xattr -d com.apple.quarantine ./garage-installer-macos-x64
+
+# Windows
+# Download from: https://github.com/miha42-github/garage-installer/releases/latest/download/garage-installer-windows-x64.exe
 ```
+
+**macOS Users**: If you see "cannot be opened because the developer cannot be verified", see the [macOS Security Warning](docs/troubleshooting.md#macos-security-warning) section in the troubleshooting guide.
 
 ### Run
 **WARNING**: Not yet available documentation in this section is not correct.

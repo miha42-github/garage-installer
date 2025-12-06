@@ -5,6 +5,7 @@
 This guide provides comprehensive solutions to common issues you might encounter when installing or managing your Garage cluster.
 
 ## Table of Contents
+- [macOS Security Warning](#macos-security-warning)
 - [Installing Prerequisites](#installing-prerequisites)
 - [SSH Connection Issues](#ssh-connection-issues)
 - [Docker Problems](#docker-problems)
@@ -14,6 +15,51 @@ This guide provides comprehensive solutions to common issues you might encounter
 - [Cluster Configuration Issues](#cluster-configuration-issues)
 - [AWS CLI Issues](#aws-cli-issues)
 - [Recovery from Failed Installation](#recovery-from-failed-installation)
+
+---
+
+## macOS Security Warning
+
+### Problem
+When running the garage-installer on macOS, you may see this error:
+```
+"garage-installer-macos-arm64 cannot be opened because the developer cannot be verified"
+```
+
+This happens because the binary is unsigned. macOS Gatekeeper prevents execution of unverified executables for security reasons.
+
+### Solution 1: Quick Fix (Recommended)
+
+Run this command to remove the quarantine attribute:
+```bash
+xattr -d com.apple.quarantine ./garage-installer-macos-arm64
+chmod +x ./garage-installer-macos-arm64
+./garage-installer-macos-arm64
+```
+
+This tells macOS to trust the downloaded binary. It's safe because you've already verified it through GitHub releases.
+
+### Solution 2: System Preferences
+
+If the command doesn't work:
+
+1. **Try to run the binary** (it will be blocked)
+2. **Open System Settings** → Privacy & Security
+3. **Scroll down** to find the security notice for garage-installer
+4. **Click "Open Anyway"**
+5. **Confirm** when prompted
+6. Run the installer again
+
+See: https://support.apple.com/guide/mac-help/apple-cant-check-app-for-malicious-software-mchleab3a043/
+
+### Why This Happens
+
+The installer is compiled as a standalone Deno binary. To eliminate this warning entirely would require:
+- Apple Developer Program membership ($99/year)
+- Code signing certificate
+- Notarization process
+
+This is not yet implemented but is planned for future releases.
 
 ---
 
