@@ -34,13 +34,33 @@ export class SSHConnection {
         port: this.config.port,
         username: this.config.username,
         readyTimeout: this.defaultTimeout,
-        // Use only ciphers fully supported in Deno's Node.js compatibility layer
+        // Cipher support for maximum compatibility with various SSH server configurations
+        // See: https://github.com/mscdex/ssh2#client-methods
         algorithms: {
           cipher: [
+            // Modern ciphers (preferred)
+            'chacha20-poly1305@openssh.com',
+            'aes128-gcm@openssh.com',
+            'aes256-gcm@openssh.com',
+            // Standard counter modes
             'aes128-ctr',
+            'aes192-ctr',
             'aes256-ctr',
+            // CBC modes (less preferred but widely available)
             'aes128-cbc',
+            'aes192-cbc',
             'aes256-cbc',
+            // Legacy support
+            '3des-cbc',
+          ],
+          serverHostKey: [
+            'ssh-rsa',
+            'rsa-sha2-512',
+            'rsa-sha2-256',
+            'ecdsa-sha2-nistp256',
+            'ecdsa-sha2-nistp384',
+            'ecdsa-sha2-nistp521',
+            'ssh-ed25519',
           ],
         },
       };
