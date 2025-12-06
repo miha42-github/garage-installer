@@ -192,28 +192,8 @@ export class SystemChecker {
     return {
       name: "Docker Compose",
       passed: false,
-      message: "Docker Compose not installed",
-      autoFix: async (ssh) => {
-        // Check if passwordless sudo is available
-        const sudoCheck = await ssh.exec("sudo -n true 2>&1");
-        
-        if (sudoCheck.code !== 0) {
-          // Return error to be handled by wizard with proper prompts
-          throw new Error("MANUAL_INTERVENTION_REQUIRED");
-        }
-        
-        // Docker Compose v2 is now included with Docker Desktop
-        // For servers, it's installed as a plugin
-        const arch = await ssh.exec("uname -m");
-        const archStr = arch.stdout.trim();
-        
-        await ssh.exec("sudo -n mkdir -p /usr/local/lib/docker/cli-plugins");
-        await ssh.exec(
-          `sudo -n curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${archStr} ` +
-          `-o /usr/local/lib/docker/cli-plugins/docker-compose`
-        );
-        await ssh.exec("sudo -n chmod +x /usr/local/lib/docker/cli-plugins/docker-compose");
-      },
+      message: "Docker Compose not installed - see troubleshooting guide for manual installation",
+      autoFix: undefined,
     };
   }
 }

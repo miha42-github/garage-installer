@@ -278,7 +278,6 @@ services:
       const node = this.nodes[i];
       const publicIP = i === 0 ? node1IP : node2IP;
       const docker = new DockerManager(node.connection!);
-      await docker.detectSudoRequirement();
 
       // Generate new config with bootstrap peers and resolved IP
       const garageConfig = this.generateGarageConfig(node, bootstrapPeers, publicIP);
@@ -311,7 +310,6 @@ services:
   private async connectNodes(nodeIds: string[]): Promise<void> {
     // Connect node1 to node2
     const docker1 = new DockerManager(this.nodes[0].connection!);
-    await docker1.detectSudoRequirement();
     const connectCmd = `/garage node connect ${nodeIds[1]}@${this.nodes[1].host}:${this.config.ports.rpc}`;
     
     const result = await docker1.execInContainer("garage", connectCmd);
@@ -322,11 +320,10 @@ services:
   }
 
   private async configureLayout(nodeIds: string[]): Promise<void> {
+  private async configureLayout(nodeIds: string[]): Promise<void> {
     const docker = new DockerManager(this.nodes[0].connection!);
-    await docker.detectSudoRequirement();
 
-    // Assign node1 to zone1
-    const assign1Cmd = `/garage layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
+    // Assign node1 to zone1age layout assign -z zone1 -c ${this.config.capacityPerNode} ${nodeIds[0].substring(0, 8)}`;
     const result1 = await docker.execInContainer("garage", assign1Cmd);
     
     if (result1.code !== 0) {
@@ -366,10 +363,9 @@ services:
   }
 
   private async getClusterStatus(): Promise<string> {
+  private async getClusterStatus(): Promise<string> {
     const docker = new DockerManager(this.nodes[0].connection!);
-    await docker.detectSudoRequirement();
     const result = await docker.execInContainer("garage", "/garage status");
-    
     if (result.code !== 0) {
       throw new Error(`Failed to get status: ${result.stderr}`);
     }
