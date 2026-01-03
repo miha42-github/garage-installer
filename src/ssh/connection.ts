@@ -38,20 +38,11 @@ export class SSHConnection {
         // See: https://github.com/mscdex/ssh2#client-methods
         algorithms: {
           cipher: [
-            // Modern ciphers (preferred)
-            'chacha20-poly1305@openssh.com',
-            'aes128-gcm@openssh.com',
-            'aes256-gcm@openssh.com',
-            // Standard counter modes
+            // Minimal, proven-compatible set for ssh2 compiled binary
             'aes128-ctr',
-            'aes192-ctr',
             'aes256-ctr',
-            // CBC modes (less preferred but widely available)
             'aes128-cbc',
-            'aes192-cbc',
             'aes256-cbc',
-            // Legacy support
-            '3des-cbc',
           ],
           serverHostKey: [
             'ssh-rsa',
