@@ -38,11 +38,9 @@ export class SSHConnection {
         // See: https://github.com/mscdex/ssh2#client-methods
         algorithms: {
           cipher: [
-            // Minimal, proven-compatible set for ssh2 compiled binary
+            // Ultra-minimal set known to work in compiled ssh2 on macOS (LibreSSL)
             'aes128-ctr',
             'aes256-ctr',
-            'aes128-cbc',
-            'aes256-cbc',
           ],
           serverHostKey: [
             'ssh-rsa',

@@ -41,9 +41,10 @@ async function main() {
       const action = await Select.prompt({
         message: "What would you like to do?",
         options: [
-          { name: "Install Garage cluster", value: "install" },
-          { name: "Validate existing cluster", value: "validate" },
-          { name: "Uninstall Garage cluster", value: "uninstall" },
+          { name: "Install Garage cluster",     value: "install" },
+          { name: "Bucket & Key Admin",          value: "admin" },
+          { name: "Validate existing cluster",   value: "validate" },
+          { name: "Uninstall Garage cluster",    value: "uninstall" },
         ],
       });
       
@@ -51,6 +52,8 @@ async function main() {
         await wizard.runUninstall();
       } else if (action === "validate") {
         await wizard.runValidation();
+      } else if (action === "admin") {
+        await wizard.runBucketAdmin();
       } else {
         await wizard.run();
       }
