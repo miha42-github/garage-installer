@@ -10,7 +10,7 @@
  *   ./garage-installer uninstall  # Uninstall Garage cluster
  */
 
-import { Wizard } from "./src/wizard.ts";
+import { Wizard } from "./src/wizard/index.ts";
 import { bold, blue, red, cyan } from "@std/fmt/colors";
 import { Select } from "@cliffy/prompt";
 import figlet from "npm:figlet@1.7.0";

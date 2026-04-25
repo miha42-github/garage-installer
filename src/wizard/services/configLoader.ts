@@ -1,0 +1,22 @@
+export interface GarageClusterFile {
+  nodes?: Array<{
+    name: string;
+    host: string;
+  }>;
+  cluster?: {
+    ports?: {
+      s3Api?: number;
+      admin?: number;
+    };
+    adminToken?: string;
+  };
+}
+
+export async function loadGarageClusterConfig(configFile = "garage-cluster-config.json"): Promise<GarageClusterFile | null> {
+  try {
+    const content = await Deno.readTextFile(configFile);
+    return JSON.parse(content) as GarageClusterFile;
+  } catch {
+    return null;
+  }
+}

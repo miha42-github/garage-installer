@@ -1,5 +1,4 @@
-import type { NodeConfig } from "./wizard.ts";
-import type { ClusterConfig } from "./garage/cluster.ts";
+import type { NodeConfig, ClusterConfig } from "./wizard/types.ts";
 
 export type PhaseStatus = "pending" | "in-progress" | "completed" | "failed";
 

@@ -1,5 +1,5 @@
 import { Client } from "ssh2";
-import type { NodeConfig } from "../wizard.ts";
+import type { NodeConfig } from "../wizard/types.ts";
 import { getLogger } from "../logger.ts";
 
 export interface ExecResult {

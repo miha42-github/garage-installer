@@ -1,4 +1,4 @@
-import type { NodeConfig } from "./wizard.ts";
+import type { NodeConfig } from "./wizard/types.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { yellow, red, green, dim } from "@std/fmt/colors";
 

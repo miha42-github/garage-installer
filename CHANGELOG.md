@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal wizard module structure refactored into focused submodules under `src/wizard/`.
+- Added `src/wizard/index.ts` as the canonical wizard entrypoint while keeping `src/wizard.ts` for backwards compatibility.
+
 ### Planned
 - 3+ node cluster support
 - Automated test suite
