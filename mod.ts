@@ -44,6 +44,7 @@ async function main() {
           { name: "Install Garage cluster",     value: "install" },
           { name: "Bucket & Key Admin",          value: "admin" },
           { name: "Validate existing cluster",   value: "validate" },
+          { name: "Health report only",          value: "health" },
           { name: "Uninstall Garage cluster",    value: "uninstall" },
         ],
       });
@@ -52,6 +53,8 @@ async function main() {
         await wizard.runUninstall();
       } else if (action === "validate") {
         await wizard.runValidation();
+      } else if (action === "health") {
+        await wizard.runHealthReport();
       } else if (action === "admin") {
         await wizard.runBucketAdmin();
       } else {

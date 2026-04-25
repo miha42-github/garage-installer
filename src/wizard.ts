@@ -9,7 +9,7 @@ import { DisplayManager } from "./ui/display.ts";
 import { CleanupManager } from "./cleanup.ts";
 import { StateManager, type InstallationState } from "./state.ts";
 import { withSpinner } from "./ui/spinner.ts";
-import { initLogger, getLogger } from "./logger.ts";
+import { initLogger, getLogger, type Logger } from "./logger.ts";
 import {
   DEFAULT_PORTS,
   DEFAULT_PATHS,
@@ -1766,6 +1766,27 @@ s3 =
         });
       }
       
+      const preflight = await this.runValidationPreflight(
+        endpoint,
+        adminEndpoint,
+        Boolean(adminToken),
+        logger,
+      );
+
+      if (!preflight.s3Reachable) {
+        console.log(red("\n✖ S3 API endpoint is not reachable from this machine."));
+        const continueDespiteS3Failure = await Confirm.prompt({
+          message: "Continue anyway?",
+          default: false,
+        });
+
+        if (!continueDespiteS3Failure) {
+          await logger.warn("Validation cancelled: S3 endpoint unreachable", { endpoint });
+          console.log(yellow("Validation cancelled."));
+          return;
+        }
+      }
+
       // Ask if user wants to create new credentials or use existing
       console.log(bold(cyan("\n=== Validation Mode ===")));
       
@@ -1774,9 +1795,13 @@ s3 =
         console.log(yellow("\n⚠ Note: Admin API token not available"));
         console.log(dim("  Cannot automatically create test credentials."));
         console.log(dim("  You'll need to provide existing S3 credentials.\n"));
+      } else if (!preflight.adminReachable) {
+        console.log(yellow("\n⚠ Note: Admin API endpoint currently unreachable"));
+        console.log(dim("  Create-mode may fail until the cluster recovers."));
+        console.log(dim("  Existing credentials mode is recommended for now.\n"));
       }
       
-      const mode = await Select.prompt({
+      let mode = await Select.prompt({
         message: "Choose validation mode:",
         options: adminToken ? [
           { name: "Create new test credentials (recommended)", value: "create" },
@@ -1784,8 +1809,23 @@ s3 =
         ] : [
           { name: "Use existing credentials", value: "existing" },
         ],
-        default: adminToken ? "create" : "existing",
+        default: adminToken && preflight.adminReachable ? "create" : "existing",
       });
+
+      if (mode === "create" && !preflight.curlAvailable) {
+        console.log(yellow("\n⚠ curl is not available, so Admin API create-mode cannot run."));
+
+        const fallbackToExisting = await Confirm.prompt({
+          message: "Switch to existing credentials mode?",
+          default: true,
+        });
+
+        if (!fallbackToExisting) {
+          throw new Error("Validation cancelled: curl is required for Admin API create-mode.");
+        }
+
+        mode = "existing";
+      }
 
       let accessKey = "";
       let secretKey = "";
@@ -1799,120 +1839,154 @@ s3 =
         const keyName = `test-key-${Date.now()}`;
         bucketName = `test-bucket-${Date.now()}`;
 
-        // Create key via Admin API
-        await withSpinner("Creating access key via Admin API", async () => {
-          const curlCmd = new Deno.Command("curl", {
-            args: [
-              "-s", "-w", "\\nHTTP_CODE:%{http_code}",
-              "-X", "POST",
-              `${adminEndpoint}/v1/key`,
-              "-H", "Content-Type: application/json",
-              "-H", `Authorization: Bearer ${adminToken}`,
-              "-d", JSON.stringify({ name: keyName }),
-            ],
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stdout, stderr } = await curlCmd.output();
-          const output = new TextDecoder().decode(stdout);
-          const errorOutput = new TextDecoder().decode(stderr);
-          
-          // Extract HTTP code from output
-          const httpCodeMatch = output.match(/HTTP_CODE:(\d+)/);
-          const httpCode = httpCodeMatch ? parseInt(httpCodeMatch[1]) : 0;
-          const responseBody = output.replace(/\nHTTP_CODE:\d+$/, '');
-          
-          if (!success || httpCode >= 400 || httpCode === 0) {
-            let errorMsg = `HTTP ${httpCode}`;
-            if (responseBody) errorMsg += `: ${responseBody}`;
-            if (errorOutput) errorMsg += ` (${errorOutput})`;
-            if (httpCode === 0) errorMsg = `Cannot connect to Admin API at ${adminEndpoint}. Is the cluster running?`;
-            throw new Error(`Failed to create key: ${errorMsg}`);
-          }
-          
-          try {
-            const response = JSON.parse(responseBody);
-            accessKey = response.accessKeyId;
-            secretKey = response.secretAccessKey;
-            
-            if (!accessKey || !secretKey) {
-              throw new Error(`API response missing credentials. Got: ${responseBody.substring(0, 100)}`);
+        try {
+          // Create key via Admin API
+          await withSpinner("Creating access key via Admin API", async () => {
+            const curlCmd = new Deno.Command("curl", {
+              args: [
+                "-s", "-w", "\\nHTTP_CODE:%{http_code}",
+                "-X", "POST",
+                `${adminEndpoint}/v1/key`,
+                "-H", "Content-Type: application/json",
+                "-H", `Authorization: Bearer ${adminToken}`,
+                "-d", JSON.stringify({ name: keyName }),
+              ],
+              stdout: "piped",
+              stderr: "piped",
+            });
+
+            const { success, stdout, stderr } = await curlCmd.output();
+            const output = new TextDecoder().decode(stdout);
+            const errorOutput = new TextDecoder().decode(stderr);
+
+            // Extract HTTP code from output
+            const httpCodeMatch = output.match(/HTTP_CODE:(\d+)/);
+            const httpCode = httpCodeMatch ? parseInt(httpCodeMatch[1]) : 0;
+            const responseBody = output.replace(/\nHTTP_CODE:\d+$/, "");
+
+            if (!success || httpCode >= 400 || httpCode === 0) {
+              let errorMsg = `HTTP ${httpCode}`;
+              if (responseBody) errorMsg += `: ${responseBody}`;
+              if (errorOutput) errorMsg += ` (${errorOutput})`;
+              if (httpCode === 0) errorMsg = `Cannot connect to Admin API at ${adminEndpoint}. Is the cluster running?`;
+              throw new Error(`Failed to create key: ${errorMsg}`);
             }
-          } catch (parseError) {
-            const err = parseError instanceof Error ? parseError : new Error(String(parseError));
-            throw new Error(`Invalid JSON response from Admin API: ${err.message}. Response: ${responseBody.substring(0, 200)}`);
-          }
-        });
 
-        console.log(dim(`  Access Key: ${accessKey}`));
-        console.log(dim(`  Secret Key: ${secretKey.substring(0, 10)}...\n`));
+            try {
+              const response = JSON.parse(responseBody);
+              accessKey = response.accessKeyId;
+              secretKey = response.secretAccessKey;
 
-        // Grant permission to create buckets
-        await withSpinner("Granting bucket creation permission", async () => {
-          const curlCmd = new Deno.Command("curl", {
-            args: [
-              "-s", "-w", "\\nHTTP_CODE:%{http_code}",
-              "-X", "POST",
-              `${adminEndpoint}/v1/key?id=${accessKey}`,
-              "-H", "Content-Type: application/json",
-              "-H", `Authorization: Bearer ${adminToken}`,
-              "-d", JSON.stringify({
-                allow: {
-                  createBucket: true
-                }
-              }),
-            ],
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stdout, stderr } = await curlCmd.output();
-          const output = new TextDecoder().decode(stdout);
-          const errorOutput = new TextDecoder().decode(stderr);
-          
-          const httpCodeMatch = output.match(/HTTP_CODE:(\d+)/);
-          const httpCode = httpCodeMatch ? parseInt(httpCodeMatch[1]) : 0;
-          const responseBody = output.replace(/\nHTTP_CODE:\d+$/, '');
-          
-          if (!success || httpCode >= 400 || httpCode === 0) {
-            let errorMsg = `HTTP ${httpCode}`;
-            if (responseBody) errorMsg += `: ${responseBody}`;
-            if (errorOutput) errorMsg += ` (${errorOutput})`;
-            throw new Error(`Failed to grant permissions: ${errorMsg}`);
-          }
-        });
-
-        // Create bucket using AWS CLI
-        await withSpinner("Creating test bucket", async () => {
-          const createBucketCmd = new Deno.Command("aws", {
-            args: [
-              "--endpoint-url", endpoint,
-              "s3", "mb",
-              `s3://${bucketName}`,
-              "--region", "garage",
-            ],
-            env: {
-              AWS_ACCESS_KEY_ID: accessKey,
-              AWS_SECRET_ACCESS_KEY: secretKey,
-              AWS_EC2_METADATA_DISABLED: "true",
-              AWS_CONFIG_FILE: `${tempDir}/config`,
-            },
-            stdout: "piped",
-            stderr: "piped",
-          });
-          
-          const { success, stderr } = await createBucketCmd.output();
-          if (!success) {
-            const errorMsg = new TextDecoder().decode(stderr);
-            if (!errorMsg.includes("BucketAlreadyOwnedByYou")) {
-              throw new Error(`Failed to create bucket: ${errorMsg}`);
+              if (!accessKey || !secretKey) {
+                throw new Error(`API response missing credentials. Got: ${responseBody.substring(0, 100)}`);
+              }
+            } catch (parseError) {
+              const err = parseError instanceof Error ? parseError : new Error(String(parseError));
+              throw new Error(`Invalid JSON response from Admin API: ${err.message}. Response: ${responseBody.substring(0, 200)}`);
             }
-          }
-        });
+          });
 
-        createdResources = true;
-      } else {
+          console.log(dim(`  Access Key: ${accessKey}`));
+          console.log(dim(`  Secret Key: ${secretKey.substring(0, 10)}...\n`));
+
+          // Grant permission to create buckets
+          await withSpinner("Granting bucket creation permission", async () => {
+            const curlCmd = new Deno.Command("curl", {
+              args: [
+                "-s", "-w", "\\nHTTP_CODE:%{http_code}",
+                "-X", "POST",
+                `${adminEndpoint}/v1/key?id=${accessKey}`,
+                "-H", "Content-Type: application/json",
+                "-H", `Authorization: Bearer ${adminToken}`,
+                "-d", JSON.stringify({
+                  allow: {
+                    createBucket: true,
+                  },
+                }),
+              ],
+              stdout: "piped",
+              stderr: "piped",
+            });
+
+            const { success, stdout, stderr } = await curlCmd.output();
+            const output = new TextDecoder().decode(stdout);
+            const errorOutput = new TextDecoder().decode(stderr);
+
+            const httpCodeMatch = output.match(/HTTP_CODE:(\d+)/);
+            const httpCode = httpCodeMatch ? parseInt(httpCodeMatch[1]) : 0;
+            const responseBody = output.replace(/\nHTTP_CODE:\d+$/, "");
+
+            if (!success || httpCode >= 400 || httpCode === 0) {
+              let errorMsg = `HTTP ${httpCode}`;
+              if (responseBody) errorMsg += `: ${responseBody}`;
+              if (errorOutput) errorMsg += ` (${errorOutput})`;
+              throw new Error(`Failed to grant permissions: ${errorMsg}`);
+            }
+          });
+
+          // Create bucket using AWS CLI
+          await withSpinner("Creating test bucket", async () => {
+            const createBucketCmd = new Deno.Command("aws", {
+              args: [
+                "--endpoint-url", endpoint,
+                "s3", "mb",
+                `s3://${bucketName}`,
+                "--region", "garage",
+              ],
+              env: {
+                AWS_ACCESS_KEY_ID: accessKey,
+                AWS_SECRET_ACCESS_KEY: secretKey,
+                AWS_EC2_METADATA_DISABLED: "true",
+                AWS_CONFIG_FILE: `${tempDir}/config`,
+              },
+              stdout: "piped",
+              stderr: "piped",
+            });
+
+            const { success, stderr } = await createBucketCmd.output();
+            if (!success) {
+              const errorMsg = new TextDecoder().decode(stderr);
+              if (!errorMsg.includes("BucketAlreadyOwnedByYou")) {
+                throw new Error(`Failed to create bucket: ${errorMsg}`);
+              }
+            }
+          });
+
+          createdResources = true;
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const adminApiUnavailable =
+            err.message.includes("Cannot connect to Admin API") ||
+            err.message.includes("HTTP 0");
+
+          if (!adminApiUnavailable) {
+            throw error;
+          }
+
+          await logger.warn("Admin API unavailable during validation", {
+            adminEndpoint,
+            error: err.message,
+          });
+
+          console.log(yellow(bold("\n⚠ Admin API appears unavailable")));
+          console.log(dim(`  Endpoint: ${adminEndpoint}`));
+          console.log(dim("  Automatic test credential creation cannot continue."));
+          console.log(dim("  You can still validate using existing S3 credentials.\n"));
+
+          const fallbackToExisting = await Confirm.prompt({
+            message: "Continue validation with existing S3 credentials instead?",
+            default: true,
+          });
+
+          if (!fallbackToExisting) {
+            throw new Error("Validation cancelled: Admin API is unreachable and no fallback credentials were provided.");
+          }
+
+          mode = "existing";
+        }
+      }
+
+      if (mode === "existing") {
         // Use existing credentials
         console.log(bold(cyan("\n=== S3 Credentials ===")));
         console.log(dim("Enter your existing Garage S3 credentials:\n"));
@@ -1992,7 +2066,11 @@ s3 =
       const err = error instanceof Error ? error : new Error(String(error));
       await logger.error("Validation failed", { error: err.message, stack: err.stack });
       console.error(red(bold("\n✖ Validation failed:")), err.message);
-      throw error;
+
+      // Validation errors are expected for unreachable clusters and should not
+      // bubble up as a fatal application crash with a stack trace.
+      console.log(yellow("\nValidation ended early. See logs for details and retry after recovery."));
+      return;
     } finally {
       // Cleanup temp config
       try {
@@ -2000,6 +2078,189 @@ s3 =
       } catch {
         // Ignore cleanup errors
       }
+    }
+  }
+
+  async runHealthReport() {
+    const logger = initLogger();
+    console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
+    await logger.info("=== Garage Health Report Started ===");
+
+    console.log(bold("This will run a basic health report for an existing Garage installation.\n"));
+    console.log(dim("It checks local tool availability and endpoint reachability from this machine.\n"));
+
+    const configFile = "garage-cluster-config.json";
+    let endpoint = "";
+    let adminEndpoint = "";
+    let hasAdminToken = false;
+
+    try {
+      const configContent = await Deno.readTextFile(configFile);
+      const config = JSON.parse(configContent);
+
+      console.log(green(`✓ Found ${configFile}`));
+
+      const s3Port = config.cluster?.ports?.s3Api || 3900;
+      const adminPort = config.cluster?.ports?.admin || 3903;
+      const nodeHost = config.nodes[0].host;
+      endpoint = `http://${nodeHost}:${s3Port}`;
+      adminEndpoint = `http://${nodeHost}:${adminPort}`;
+      hasAdminToken = Boolean(config.cluster?.adminToken);
+
+      console.log(dim(`  S3 API: ${endpoint}`));
+      console.log(dim(`  Admin API: ${adminEndpoint}\n`));
+
+      const useConfig = await Confirm.prompt({
+        message: "Use configuration from file?",
+        default: true,
+      });
+
+      if (!useConfig) {
+        endpoint = "";
+        adminEndpoint = "";
+        hasAdminToken = false;
+      }
+    } catch {
+      // Config file doesn't exist or is invalid
+    }
+
+    if (!endpoint) {
+      const host = await Input.prompt({
+        message: "Garage S3 API hostname or IP:",
+        validate: (value: string) => {
+          if (!value) return "Hostname is required";
+          return true;
+        },
+      });
+
+      const s3Port = await NumberPrompt.prompt({
+        message: "S3 API port:",
+        default: 3900,
+        min: 1,
+        max: 65535,
+      });
+
+      const adminPort = await NumberPrompt.prompt({
+        message: "Admin API port:",
+        default: 3903,
+        min: 1,
+        max: 65535,
+      });
+
+      endpoint = `http://${host}:${s3Port}`;
+      adminEndpoint = `http://${host}:${adminPort}`;
+
+      hasAdminToken = await Confirm.prompt({
+        message: "Do you have an Admin API token configured?",
+        default: false,
+      });
+    }
+
+    const preflight = await this.runValidationPreflight(
+      endpoint,
+      adminEndpoint,
+      hasAdminToken,
+      logger,
+    );
+
+    console.log(bold(cyan("=== Health Report Outcome ===")));
+    if (preflight.s3Reachable && preflight.adminReachable) {
+      console.log(green("✓ Core endpoints look healthy from this machine."));
+    } else {
+      console.log(yellow("⚠ One or more endpoint checks failed."));
+      if (!preflight.s3Reachable) {
+        console.log(dim("  • S3 API is unreachable: client operations will fail."));
+      }
+      if (!preflight.adminReachable) {
+        console.log(dim("  • Admin API is unreachable: key/bucket admin automation may fail."));
+      }
+    }
+
+    await logger.info("Garage health report completed", {
+      endpoint,
+      adminEndpoint,
+      s3Reachable: preflight.s3Reachable,
+      adminReachable: preflight.adminReachable,
+      curlAvailable: preflight.curlAvailable,
+    });
+  }
+
+  private async runValidationPreflight(
+    endpoint: string,
+    adminEndpoint: string,
+    hasAdminToken: boolean,
+    logger: Logger,
+  ): Promise<{ s3Reachable: boolean; adminReachable: boolean; curlAvailable: boolean; awsAvailable: boolean }> {
+    console.log(bold(cyan("\n=== Preflight: Basic System Health ===")));
+
+    const awsAvailable = await this.commandExists("aws");
+    const curlAvailable = await this.commandExists("curl");
+    const s3Status = await this.checkEndpointReachability(endpoint);
+    const adminStatus = await this.checkEndpointReachability(adminEndpoint);
+
+    const statusLabel = (ok: boolean) => ok ? green("✓ OK") : red("✖ DOWN");
+
+    console.log(dim("\nLocal tools:"));
+    console.log(`  AWS CLI: ${awsAvailable ? green("✓ OK") : yellow("⚠ MISSING")}`);
+    console.log(`  curl: ${curlAvailable ? green("✓ OK") : yellow("⚠ MISSING")}`);
+
+    console.log(dim("\nEndpoints:"));
+    console.log(`  S3 API (${endpoint}): ${statusLabel(s3Status.ok)} ${dim(`(${s3Status.detail})`)}`);
+    console.log(`  Admin API (${adminEndpoint}): ${statusLabel(adminStatus.ok)} ${dim(`(${adminStatus.detail})`)}`);
+
+    if (!hasAdminToken) {
+      console.log(dim("  Admin token: not provided (create-mode unavailable)"));
+    }
+
+    const okCount = [s3Status.ok, adminStatus.ok].filter(Boolean).length;
+    const summaryColor = okCount === 2 ? green : okCount === 1 ? yellow : red;
+    console.log(summaryColor(`\nHealth summary: ${okCount}/2 endpoints reachable\n`));
+
+    await logger.info("Validation preflight health", {
+      endpoint,
+      adminEndpoint,
+      s3Reachable: s3Status.ok,
+      s3Detail: s3Status.detail,
+      adminReachable: adminStatus.ok,
+      adminDetail: adminStatus.detail,
+      awsAvailable,
+      curlAvailable,
+      hasAdminToken,
+    });
+
+    return {
+      s3Reachable: s3Status.ok,
+      adminReachable: adminStatus.ok,
+      curlAvailable,
+      awsAvailable,
+    };
+  }
+
+  private async commandExists(command: string): Promise<boolean> {
+    try {
+      const check = new Deno.Command("which", {
+        args: [command],
+        stdout: "null",
+        stderr: "null",
+      });
+      const { success } = await check.output();
+      return success;
+    } catch {
+      return false;
+    }
+  }
+
+  private async checkEndpointReachability(url: string): Promise<{ ok: boolean; detail: string }> {
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        signal: AbortSignal.timeout(3000),
+      });
+      return { ok: true, detail: `HTTP ${response.status}` };
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      const compact = err.message.split("\n")[0].trim();
+      return { ok: false, detail: compact || "request failed" };
     }
   }
 
