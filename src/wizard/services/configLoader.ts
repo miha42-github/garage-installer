@@ -4,9 +4,12 @@ export interface GarageClusterFile {
     host: string;
   }>;
   cluster?: {
+    replicationFactor?: number;
     ports?: {
       s3Api?: number;
       admin?: number;
+      rpc?: number;
+      s3Web?: number;
     };
     adminToken?: string;
   };

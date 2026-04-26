@@ -11,55 +11,77 @@
  */
 
 import { Wizard } from "./src/wizard/index.ts";
+import { runTUI } from "./src/tui/main.ts";
 import { bold, blue, red, cyan } from "@std/fmt/colors";
 import { Select } from "@cliffy/prompt";
 import figlet from "npm:figlet@1.7.0";
 
 const VERSION = "1.0.0";
 
-async function main() {
+function shouldRunLegacyCLI(): boolean {
+  if (Deno.env.get("GARAGE_USE_LEGACY_CLI") === "1") {
+    return true;
+  }
+
+  if (Deno.args.includes("--legacy-cli")) {
+    return true;
+  }
+
+  return false;
+}
+
+async function runLegacyCLI() {
   // Display banner
   console.clear();
-  
+
   const banner = figlet.textSync("GARAGE", {
     font: "Standard",
   });
-  
+
   console.log(cyan(banner));
   console.log(bold(blue("  Cluster Installer v" + VERSION)));
   console.log("  S3-Compatible Object Storage for Your Infrastructure");
   console.log();
 
+  const wizard = new Wizard();
+
+  // Check if uninstall mode was requested via command line
+  if (Deno.args.includes("uninstall") || Deno.args.includes("remove")) {
+    await wizard.runUninstall();
+    return;
+  }
+
+  // Ask user what they want to do
+  const action = await Select.prompt({
+    message: "What would you like to do?",
+    options: [
+      { name: "Install Garage cluster", value: "install" },
+      { name: "Bucket & Key Admin", value: "admin" },
+      { name: "Validate existing cluster", value: "validate" },
+      { name: "Health report only", value: "health" },
+      { name: "Uninstall Garage cluster", value: "uninstall" },
+    ],
+  });
+
+  if (action === "uninstall") {
+    await wizard.runUninstall();
+  } else if (action === "validate") {
+    await wizard.runValidation();
+  } else if (action === "health") {
+    await wizard.runHealthReport();
+  } else if (action === "admin") {
+    await wizard.runBucketAdmin();
+  } else {
+    await wizard.run();
+  }
+}
+
+async function main() {
   try {
-    const wizard = new Wizard();
-    
-    // Check if uninstall mode was requested via command line
-    if (Deno.args.includes("uninstall") || Deno.args.includes("remove")) {
-      await wizard.runUninstall();
+    if (shouldRunLegacyCLI()) {
+      await runLegacyCLI();
     } else {
-      // Ask user what they want to do
-      const action = await Select.prompt({
-        message: "What would you like to do?",
-        options: [
-          { name: "Install Garage cluster",     value: "install" },
-          { name: "Bucket & Key Admin",          value: "admin" },
-          { name: "Validate existing cluster",   value: "validate" },
-          { name: "Health report only",          value: "health" },
-          { name: "Uninstall Garage cluster",    value: "uninstall" },
-        ],
-      });
-      
-      if (action === "uninstall") {
-        await wizard.runUninstall();
-      } else if (action === "validate") {
-        await wizard.runValidation();
-      } else if (action === "health") {
-        await wizard.runHealthReport();
-      } else if (action === "admin") {
-        await wizard.runBucketAdmin();
-      } else {
-        await wizard.run();
-      }
+      await runTUI();
     }
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
