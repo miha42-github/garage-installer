@@ -38,12 +38,27 @@ type ReachabilityFn = (url: string) => Promise<{ ok: boolean; detail: string }>;
 type HostProbeFn = (host: string) => Promise<ProbeHealth>;
 type CommandExistsFn = (command: string) => Promise<boolean>;
 
+export type GarageHealthResult = {
+  reachable: boolean;
+  healthy: boolean;
+  storageNodes: number;
+  storageNodesOk: number;
+};
+
+type StorageProbeFn = (host: string, adminPort: number) => Promise<GarageHealthResult>;
+
 type AdapterOptions = {
   configFile?: string;
   checkEndpoint?: ReachabilityFn;
   checkPing?: HostProbeFn;
   checkSSH?: HostProbeFn;
   checkCommandExists?: CommandExistsFn;
+  checkGarageHealth?: StorageProbeFn;
+};
+
+export type StepDef = {
+  label: string;
+  run: () => Promise<string | void>;
 };
 
 export type PollingController = {
@@ -144,6 +159,27 @@ export async function checkSSHProbe(host: string): Promise<ProbeHealth> {
   }
 }
 
+export async function checkGarageHealthEndpoint(host: string, adminPort: number): Promise<GarageHealthResult> {
+  const url = `http://${host}:${adminPort}/health`;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const text = await response.text();
+    try {
+      const data = JSON.parse(text);
+      return {
+        reachable: true,
+        healthy: data.status === "healthy",
+        storageNodes: typeof data.storage_nodes === "number" ? data.storage_nodes : 0,
+        storageNodesOk: typeof data.storage_nodes_ok === "number" ? data.storage_nodes_ok : 0,
+      };
+    } catch {
+      return { reachable: true, healthy: response.ok, storageNodes: 0, storageNodesOk: 0 };
+    }
+  } catch {
+    return { reachable: false, healthy: false, storageNodes: 0, storageNodesOk: 0 };
+  }
+}
+
 function summarizeNodeStatus(probes: ProbeHealth[]): { status: HealthStatus; label: string } {
   const hasDownHost = probes[2].status === "down" && probes[3].status === "down";
   const allOk = probes.every((probe) => probe.status === "ok");
@@ -166,13 +202,13 @@ function metricStatus(ok: number, total: number): HealthStatus {
 }
 
 export async function collectHealthSnapshot(options: AdapterOptions = {}): Promise<HealthSnapshot> {
-  const configFile = options.configFile ?? "garage-cluster-config.json";
   const checkEndpoint = options.checkEndpoint ?? checkEndpointReachability;
   const checkPing = options.checkPing ?? checkPingProbe;
   const checkSSH = options.checkSSH ?? checkSSHProbe;
   const checkCommand = options.checkCommandExists ?? commandExists;
+  const checkGarageHealth = options.checkGarageHealth ?? checkGarageHealthEndpoint;
 
-  const config = await loadGarageClusterConfig(configFile);
+  const config = await loadGarageClusterConfig(options.configFile);
   const nodes = config?.nodes ?? [];
 
   const s3Port = config?.cluster?.ports?.s3Api ?? 3900;
@@ -226,10 +262,36 @@ export async function collectHealthSnapshot(options: AdapterOptions = {}): Promi
   const reachableNodes = nodeHealth.filter((node) => node.status === "ok").length;
   const degradedNodes = nodeHealth.filter((node) => node.status !== "ok").length;
 
-  const [curlAvailable, awsAvailable] = await Promise.all([
-    checkCommand("curl"),
-    checkCommand("aws"),
+  const [[curlAvailable, awsAvailable], garageHealth] = await Promise.all([
+    Promise.all([checkCommand("curl"), checkCommand("aws")]),
+    (async (): Promise<GarageHealthResult> => {
+      for (const node of nodes.slice(0, 2)) {
+        const result = await checkGarageHealth(node.host, adminPort);
+        if (result.reachable) return result;
+      }
+      return { reachable: false, healthy: false, storageNodes: 0, storageNodesOk: 0 };
+    })(),
   ]);
+
+  let storageValue: string;
+  let storageDetail: string;
+  let storageStatus: HealthStatus;
+
+  if (!garageHealth.reachable) {
+    storageValue = "NOT PROBED";
+    storageDetail = "admin API unreachable";
+    storageStatus = "warn";
+  } else if (garageHealth.storageNodes > 0) {
+    const sOk = garageHealth.storageNodesOk;
+    const sTotal = garageHealth.storageNodes;
+    storageValue = `${sOk}/${sTotal} NODES OK`;
+    storageDetail = garageHealth.healthy ? "all partitions ok" : "partitions degraded";
+    storageStatus = metricStatus(sOk, sTotal);
+  } else {
+    storageValue = garageHealth.healthy ? "HEALTHY" : "DEGRADED";
+    storageDetail = "garage /health ok";
+    storageStatus = garageHealth.healthy ? "ok" : "warn";
+  }
 
   const metrics: MetricHealth[] = [
     {
@@ -246,14 +308,14 @@ export async function collectHealthSnapshot(options: AdapterOptions = {}): Promi
     },
     {
       title: "STORAGE",
-      value: "NOT PROBED",
-      detail: "disk telemetry adapter pending",
-      status: "warn",
+      value: storageValue,
+      detail: storageDetail,
+      status: storageStatus,
     },
     {
       title: "API",
       value: `${curlAvailable ? "curl" : "no curl"} · ${awsAvailable ? "aws" : "no aws"}`,
-      detail: "local tooling for admin/validation",
+      detail: "local tooling only",
       status: curlAvailable && awsAvailable ? "ok" : "warn",
     },
   ];
@@ -263,6 +325,253 @@ export async function collectHealthSnapshot(options: AdapterOptions = {}): Promi
     nodes: nodeHealth,
     metrics,
   };
+}
+
+async function runWithEnv(
+  command: string,
+  args: string[],
+  env: Record<string, string>,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const output = await new Deno.Command(command, {
+    args,
+    stdout: "piped",
+    stderr: "piped",
+    env: { ...Deno.env.toObject(), ...env },
+    signal: AbortSignal.timeout(10000),
+  }).output();
+  return {
+    code: output.code,
+    stdout: new TextDecoder().decode(output.stdout).trim(),
+    stderr: new TextDecoder().decode(output.stderr).trim(),
+  };
+}
+
+/**
+ * Builds the full end-to-end S3 validation step array.
+ * Steps share closure state: config loaded once, key/bucket created and cleaned up.
+ */
+export function buildValidateFullSteps(configFile?: string): StepDef[] {
+  let s3Url = "";
+  let adminUrl = "";
+  let adminToken = "";
+  let accessKey = "";
+  let secretKey = "";
+  let bucketName = "";
+  let bucketId = "";
+  let keyId = "";
+
+  const awsCreds = () => ({
+    AWS_ACCESS_KEY_ID: accessKey,
+    AWS_SECRET_ACCESS_KEY: secretKey,
+    AWS_DEFAULT_REGION: "garage",
+  });
+
+  return [
+    {
+      label: "Load cluster config",
+      run: async () => {
+        const config = await loadGarageClusterConfig(configFile);
+        if (!config?.nodes?.[0]?.host) throw new Error("no config — run install first");
+        const host = config.nodes[0].host;
+        const s3Port = config.cluster?.ports?.s3Api ?? 3900;
+        const adminPort = config.cluster?.ports?.admin ?? 3903;
+        adminToken = config.cluster?.adminToken ?? "";
+        if (!adminToken) throw new Error("no adminToken in config");
+        s3Url = `http://${host}:${s3Port}`;
+        adminUrl = `http://${host}:${adminPort}`;
+        return `${host}  s3:${s3Port}  admin:${adminPort}`;
+      },
+    },
+    {
+      label: "S3 API reachable",
+      run: async () => {
+        const r = await checkEndpointReachability(s3Url);
+        if (!r.ok) throw new Error(compactDetail(r.detail));
+        return r.detail;
+      },
+    },
+    {
+      label: "Admin API reachable",
+      run: async () => {
+        const r = await checkEndpointReachability(adminUrl);
+        if (!r.ok) throw new Error(compactDetail(r.detail));
+        return r.detail;
+      },
+    },
+    {
+      label: "Create validation key",
+      run: async () => {
+        const resp = await fetch(`${adminUrl}/v1/key`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "tui-validate" }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!resp.ok) throw new Error(`POST /v1/key → ${resp.status}`);
+        const data = await resp.json() as { accessKeyId: string; secretAccessKey: string };
+        keyId = data.accessKeyId;
+        accessKey = data.accessKeyId;
+        secretKey = data.secretAccessKey;
+        return `${keyId.slice(0, 8)}…`;
+      },
+    },
+    {
+      label: "Create bucket & grant access",
+      run: async () => {
+        bucketName = `tui-validate-${Date.now()}`;
+        const createResp = await fetch(`${adminUrl}/v1/bucket`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ globalAlias: bucketName }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!createResp.ok) throw new Error(`POST /v1/bucket → ${createResp.status}`);
+        const bdata = await createResp.json() as { id: string };
+        bucketId = bdata.id;
+        const allowResp = await fetch(`${adminUrl}/v1/bucket/allow`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bucketId,
+            accessKeyId: keyId,
+            permissions: { read: true, write: true, owner: false },
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!allowResp.ok) throw new Error(`POST /v1/bucket/allow → ${allowResp.status}`);
+        return bucketName;
+      },
+    },
+    {
+      label: "Upload test object",
+      run: async () => {
+        const tmp = await Deno.makeTempFile({ prefix: "garage-validate-" });
+        try {
+          await Deno.writeTextFile(tmp, "garage-installer-validate-ok\n");
+          const r = await runWithEnv(
+            "aws",
+            ["s3api", "put-object", "--bucket", bucketName, "--key", "validate.txt", "--body", tmp, "--endpoint-url", s3Url],
+            awsCreds(),
+          );
+          if (r.code !== 0) throw new Error(r.stderr || r.stdout);
+          return "uploaded validate.txt";
+        } finally {
+          await Deno.remove(tmp).catch(() => {});
+        }
+      },
+    },
+    {
+      label: "Download & verify object",
+      run: async () => {
+        const tmp = await Deno.makeTempFile({ prefix: "garage-dl-" });
+        try {
+          const r = await runWithEnv(
+            "aws",
+            ["s3api", "get-object", "--bucket", bucketName, "--key", "validate.txt", tmp, "--endpoint-url", s3Url],
+            awsCreds(),
+          );
+          if (r.code !== 0) throw new Error(r.stderr || r.stdout);
+          const content = await Deno.readTextFile(tmp);
+          if (!content.includes("garage-installer-validate-ok")) {
+            throw new Error(`content mismatch: ${content.slice(0, 30)}`);
+          }
+          return "content verified";
+        } finally {
+          await Deno.remove(tmp).catch(() => {});
+        }
+      },
+    },
+    {
+      label: "Cleanup bucket & key",
+      run: async () => {
+        const errs: string[] = [];
+        if (bucketName) {
+          const r = await runWithEnv(
+            "aws",
+            ["s3api", "delete-object", "--bucket", bucketName, "--key", "validate.txt", "--endpoint-url", s3Url],
+            awsCreds(),
+          ).catch((e: unknown) => ({ code: 1, stdout: "", stderr: String(e) }));
+          if (r.code !== 0) errs.push(`del obj: ${r.stderr.slice(0, 20)}`);
+        }
+        if (bucketId) {
+          const r = await fetch(`${adminUrl}/v1/bucket?id=${encodeURIComponent(bucketId)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${adminToken}` },
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null);
+          if (!r?.ok) errs.push(`del bucket: ${r?.status ?? "err"}`);
+        }
+        if (keyId) {
+          const r = await fetch(`${adminUrl}/v1/key?id=${encodeURIComponent(keyId)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${adminToken}` },
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => null);
+          if (!r?.ok) errs.push(`del key: ${r?.status ?? "err"}`);
+        }
+        return errs.length ? `partial: ${errs.join(", ")}` : "bucket & key removed";
+      },
+    },
+  ];
+}
+
+/**
+ * Builds the validation preflight step array. Steps share closure state so
+ * config is loaded once and endpoints are available to subsequent steps.
+ */
+export function buildValidatePreflightSteps(configFile?: string): StepDef[] {
+  let s3Url = "";
+  let adminUrl = "";
+
+  return [
+    {
+      label: "Load cluster config",
+      run: async () => {
+        const config = await loadGarageClusterConfig(configFile);
+        if (!config?.nodes?.[0]?.host) {
+          throw new Error("no config found — run install first");
+        }
+        const host = config.nodes[0].host;
+        const s3Port = config.cluster?.ports?.s3Api ?? 3900;
+        const adminPort = config.cluster?.ports?.admin ?? 3903;
+        s3Url = `http://${host}:${s3Port}`;
+        adminUrl = `http://${host}:${adminPort}`;
+        return `${host}  S3:${s3Port}  Admin:${adminPort}`;
+      },
+    },
+    {
+      label: "S3 API endpoint",
+      run: async () => {
+        const result = await checkEndpointReachability(s3Url);
+        if (!result.ok) throw new Error(compactDetail(result.detail));
+        return result.detail;
+      },
+    },
+    {
+      label: "Admin API endpoint",
+      run: async () => {
+        const result = await checkEndpointReachability(adminUrl);
+        if (!result.ok) throw new Error(compactDetail(result.detail));
+        return result.detail;
+      },
+    },
+    {
+      label: "AWS CLI available",
+      run: async () => {
+        const ok = await commandExists("aws");
+        if (!ok) throw new Error("aws not found — install awscli");
+        return "found in PATH";
+      },
+    },
+    {
+      label: "curl available",
+      run: async () => {
+        const ok = await commandExists("curl");
+        if (!ok) throw new Error("curl not found");
+        return "found in PATH";
+      },
+    },
+  ];
 }
 
 export function createPollingController(task: () => Promise<void> | void, intervalMs: number): PollingController {

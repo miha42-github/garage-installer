@@ -53,14 +53,13 @@ export async function runValidationWorkflow(deps: {
       }
     });
 
-    const configFile = "garage-cluster-config.json";
     let endpoint = "";
     let adminEndpoint = "";
     let adminToken = "";
 
-    const config = await loadGarageClusterConfig(configFile);
+    const config = await loadGarageClusterConfig();
     if (config?.nodes?.[0]?.host) {
-      console.log(green(`✓ Found ${configFile}`));
+      console.log(green(`✓ Loaded cluster config`));
 
       const s3Port = config.cluster?.ports?.s3Api || 3900;
       const adminPort = config.cluster?.ports?.admin || 3903;

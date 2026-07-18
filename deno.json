@@ -1,7 +1,7 @@
 {
   "tasks": {
     "dev": "deno run --allow-all mod.ts",
-    "test": "deno test --allow-env --allow-read --allow-write --allow-run --allow-net src/wizard/services/*.test.ts",
+    "test": "deno test --allow-env --allow-read --allow-write --allow-run --allow-net src/wizard/services/*.test.ts src/wizard/workflows/*.test.ts src/tui/state.test.ts src/tui/adapters/*.test.ts src/tui/panes/*.test.ts",
     "compile": "deno compile --allow-all --output=garage-installer mod.ts",
     "compile-linux": "deno compile --allow-all --target x86_64-unknown-linux-gnu --output=dist/garage-installer-linux-x64 mod.ts",
     "compile-macos": "deno compile --allow-all --target x86_64-apple-darwin --output=dist/garage-installer-macos-x64 mod.ts",

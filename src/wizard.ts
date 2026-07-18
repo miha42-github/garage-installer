@@ -433,7 +433,8 @@ export class Wizard {
   private async postInstall() {
     console.log("\nSaving configuration...");
     
-    const configFile = "./garage-cluster-config.json";
+    const { getConfigPath, ensureAppDir } = await import("./wizard/services/paths.ts");
+    const configFile = getConfigPath();
     const config = {
       nodes: [
         { name: this.node1!.name, host: this.node1!.host },
@@ -443,6 +444,7 @@ export class Wizard {
       installedAt: new Date().toISOString(),
     };
 
+    await ensureAppDir();
     await Deno.writeTextFile(configFile, JSON.stringify(config, null, 2));
     console.log(green(`✓ Configuration saved to ${configFile}`));
 

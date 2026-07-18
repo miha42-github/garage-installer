@@ -79,6 +79,12 @@ async function runLegacyCLI() {
 async function main() {
   try {
     if (shouldRunLegacyCLI()) {
+      // TUI mode handles its own SIGINT via tui.dispatch(); only register
+      // the legacy handler when running the prompt-driven wizard.
+      Deno.addSignalListener("SIGINT", () => {
+        console.log(red("\n\nInstallation cancelled by user."));
+        Deno.exit(130);
+      });
       await runLegacyCLI();
     } else {
       await runTUI();
@@ -90,12 +96,6 @@ async function main() {
     Deno.exit(1);
   }
 }
-
-// Handle Ctrl+C gracefully
-Deno.addSignalListener("SIGINT", () => {
-  console.log(red("\n\nInstallation cancelled by user."));
-  Deno.exit(130);
-});
 
 if (import.meta.main) {
   await main();

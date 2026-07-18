@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {
+      "name": "node1",
+      "host": "espresso-1"
+    },
+    {
+      "name": "node2",
+      "host": "cafe-1"
+    }
+  ],
+  "cluster": {
+    "rpcSecret": "960e3ead3e7d29ba5ecaf1c9314ea03423d65025f6a542dec656c446b861e686",
+    "adminToken": "9dd6dea65513ac6c815ba59f25f8f38e47e0e15cbf68427e876c4279d18662ee",
+    "capacityPerNode": "10G",
+    "dataDir": "$HOME/garage/data",
+    "metaDir": "$HOME/garage/meta",
+    "workdir": "$HOME/garage",
+    "garageVersion": "v2.1.0",
+    "replicationFactor": 2,
+    "ports": {
+      "s3Api": 3900,
+      "rpc": 3901,
+      "s3Web": 3902,
+      "admin": 3903
+    }
+  },
+  "installedAt": "2026-01-03T19:01:32.809Z"
+}

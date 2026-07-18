@@ -1,10 +1,16 @@
-import { Input, Confirm, Number as NumberPrompt } from "@cliffy/prompt";
+import { Number as NumberPrompt } from "@cliffy/prompt";
 import { green, yellow, bold, cyan, dim } from "@std/fmt/colors";
 import { initLogger } from "../../logger.ts";
 import { loadGarageClusterConfig } from "../services/configLoader.ts";
+import { cliInteraction, type Interaction } from "../services/interaction.ts";
 import { runValidationPreflightWorkflow } from "./validation.ts";
 
-export async function runHealthReportWorkflow(): Promise<void> {
+export async function runHealthReportWorkflow(options: {
+  interaction?: Interaction;
+  configFile?: string;
+} = {}): Promise<void> {
+  const ui = options.interaction ?? cliInteraction;
+
   const logger = initLogger();
   console.log(dim(`Logging to: ${logger.getLogPath()}\n`));
   await logger.info("=== Garage Health Report Started ===");
@@ -12,14 +18,13 @@ export async function runHealthReportWorkflow(): Promise<void> {
   console.log(bold("This will run a basic health report for an existing Garage installation.\n"));
   console.log(dim("It checks local tool availability and endpoint reachability from this machine.\n"));
 
-  const configFile = "garage-cluster-config.json";
   let endpoint = "";
   let adminEndpoint = "";
   let hasAdminToken = false;
 
-  const config = await loadGarageClusterConfig(configFile);
+  const config = await loadGarageClusterConfig(options.configFile);
   if (config?.nodes?.[0]?.host) {
-    console.log(green(`✓ Found ${configFile}`));
+    console.log(green(`✓ Loaded cluster config`));
 
     const s3Port = config.cluster?.ports?.s3Api || 3900;
     const adminPort = config.cluster?.ports?.admin || 3903;
@@ -31,10 +36,7 @@ export async function runHealthReportWorkflow(): Promise<void> {
     console.log(dim(`  S3 API: ${endpoint}`));
     console.log(dim(`  Admin API: ${adminEndpoint}\n`));
 
-    const useConfig = await Confirm.prompt({
-      message: "Use configuration from file?",
-      default: true,
-    });
+    const useConfig = await ui.confirm("Use configuration from file?", true);
 
     if (!useConfig) {
       endpoint = "";
@@ -44,13 +46,7 @@ export async function runHealthReportWorkflow(): Promise<void> {
   }
 
   if (!endpoint) {
-    const host = await Input.prompt({
-      message: "Garage S3 API hostname or IP:",
-      validate: (value: string) => {
-        if (!value) return "Hostname is required";
-        return true;
-      },
-    });
+    const host = await ui.input("Garage S3 API hostname or IP:");
 
     const s3Port = await NumberPrompt.prompt({
       message: "S3 API port:",
@@ -69,10 +65,7 @@ export async function runHealthReportWorkflow(): Promise<void> {
     endpoint = `http://${host}:${s3Port}`;
     adminEndpoint = `http://${host}:${adminPort}`;
 
-    hasAdminToken = await Confirm.prompt({
-      message: "Do you have an Admin API token configured?",
-      default: false,
-    });
+    hasAdminToken = await ui.confirm("Do you have an Admin API token configured?", false);
   }
 
   const preflight = await runValidationPreflightWorkflow(

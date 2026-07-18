@@ -14,21 +14,20 @@ export async function runBucketAdminWorkflow(): Promise<void> {
   await logger.info("=== Bucket & Key Admin Started ===");
 
   // ── Load cluster config ──────────────────────────────────────────────
-  const configFile = "garage-cluster-config.json";
   let nodeHost = "";
   let s3Port = 3900;
   let foundKey = "";
   let username = getDefaultSSHUsername();
 
-  const cfg = await loadGarageClusterConfig(configFile);
+  const cfg = await loadGarageClusterConfig();
   if (cfg?.nodes?.[0]?.host) {
     nodeHost = cfg.nodes?.[0]?.host || "";
     s3Port = cfg.cluster?.ports?.s3Api ?? 3900;
-    console.log(green(`✓ Loaded config from ${configFile}`));
+    console.log(green(`✓ Loaded cluster config`));
     console.log(dim(`  Admin node : ${nodeHost}`));
     console.log(dim(`  S3 port    : ${s3Port}`));
   } else {
-    console.log(yellow("⚠ Could not load garage-cluster-config.json"));
+    console.log(yellow("⚠ No cluster config found. Run install first."));
   }
 
   // Prompt for overrides if config was missing or user wants to change

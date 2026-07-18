@@ -1,4 +1,14 @@
 import type { NodeConfig, ClusterConfig } from "./wizard/types.ts";
+import { getStatePath, ensureAppDir, migrateIfNeeded, CWD_STATE_FILE } from "./wizard/services/paths.ts";
+
+let stateMigrationDone = false;
+
+async function ensureStateMigrated(): Promise<void> {
+  if (!stateMigrationDone) {
+    stateMigrationDone = true;
+    await migrateIfNeeded(getStatePath(), CWD_STATE_FILE);
+  }
+}
 
 export type PhaseStatus = "pending" | "in-progress" | "completed" | "failed";
 
@@ -49,29 +59,24 @@ export interface InstallationState {
 }
 
 export class StateManager {
-  private static STATE_FILE = ".garage-installer-state.json";
   private state: InstallationState | null = null;
 
   constructor() {}
 
-  /**
-   * Check if a state file exists
-   */
   async exists(): Promise<boolean> {
+    await ensureStateMigrated();
     try {
-      await Deno.stat(StateManager.STATE_FILE);
+      await Deno.stat(getStatePath());
       return true;
     } catch {
       return false;
     }
   }
 
-  /**
-   * Load state from file
-   */
   async load(): Promise<InstallationState | null> {
+    await ensureStateMigrated();
     try {
-      const content = await Deno.readTextFile(StateManager.STATE_FILE);
+      const content = await Deno.readTextFile(getStatePath());
       this.state = JSON.parse(content);
       return this.state;
     } catch {
@@ -189,29 +194,18 @@ export class StateManager {
     this.state.lastUpdated = new Date().toISOString();
   }
 
-  /**
-   * Save state to file
-   */
   async save(): Promise<void> {
     if (!this.state) return;
-    
+    await ensureAppDir();
     this.state.lastUpdated = new Date().toISOString();
-    await Deno.writeTextFile(
-      StateManager.STATE_FILE,
-      JSON.stringify(this.state, null, 2)
-    );
+    await Deno.writeTextFile(getStatePath(), JSON.stringify(this.state, null, 2));
   }
 
-  /**
-   * Clear state file
-   */
   async clear(): Promise<void> {
     try {
-      await Deno.remove(StateManager.STATE_FILE);
+      await Deno.remove(getStatePath());
       this.state = null;
-    } catch {
-      // File doesn't exist, that's fine
-    }
+    } catch { /* file absent, nothing to clear */ }
   }
 
   /**

@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(deno task dev)",
+      "Bash(deno task test)",
+      "Bash(deno task compile)",
+      "Bash(deno task build-all)",
+      "Bash(deno task compile-linux)",
+      "Bash(deno task compile-macos)",
+      "Bash(deno task compile-windows)",
+      "Bash(deno check **/*.ts)",
+      "Bash(deno lint)",
+      "Bash(deno fmt --check)",
+      "Bash(tail -f garage-installer.log)",
+      "Bash(tail -n * garage-installer.log)",
+      "Bash(cat garage-installer.log)",
+      "Bash(cat garage-cluster-config.json)",
+      "Bash(cat .garage-installer-state.json)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git status)"
+    ]
+  }
+}

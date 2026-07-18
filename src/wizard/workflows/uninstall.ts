@@ -41,12 +41,11 @@ export async function runUninstallWorkflow(deps: {
   try {
     let usesSavedConfig = false;
 
-    const configFile = "garage-cluster-config.json";
-    const config = await loadGarageClusterConfig(configFile);
+    const config = await loadGarageClusterConfig();
     if (config?.nodes && config.nodes.length === 2) {
       const configNode1 = config.nodes[0]!;
       const configNode2 = config.nodes[1]!;
-      console.log(green(`✓ Found ${configFile}`));
+      console.log(green(`✓ Loaded cluster config`));
       console.log(`  • ${configNode1.name} (${configNode1.host})`);
       console.log(`  • ${configNode2.name} (${configNode2.host})\n`);
 

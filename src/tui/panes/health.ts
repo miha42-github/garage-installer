@@ -7,6 +7,7 @@ import { C } from "../colors.ts";
 
 type HealthPaneController = {
   setVisible: (visible: boolean) => void;
+  clearDisplay: () => void;
   refresh: () => Promise<void>;
   applySnapshot: (snapshot: HealthSnapshot) => void;
   appendEvent: (line: string) => void;
@@ -145,7 +146,7 @@ export function createHealthPane(
   const metricWidth = Math.max(20, Math.floor((innerWidth - (metricCols - 1) * 2) / metricCols));
   const metricRows = Math.ceil(4 / metricCols);
   const nodeTop = metricsTop + metricRows * 4 + 1;
-  const nodeHeight = 9;
+  const nodeHeight = 10;
   const twoColumns = viewWidth >= 92;
   const nodeWidth = twoColumns
     ? Math.max(20, Math.floor((innerWidth - 2) / 2))
@@ -212,7 +213,11 @@ export function createHealthPane(
         height: 1,
       },
       theme: { base: C.amberMuted },
-      text: new Computed(() => metric.value.detail),
+      text: new Computed(() => {
+        const d = metric.value.detail;
+        const max = metricWidth - 2;
+        return d.length > max ? d.slice(0, max) : d;
+      }),
     }));
   });
 
@@ -386,6 +391,24 @@ export function createHealthPane(
     }
   };
 
+  // Call BEFORE setVisible(false). While components are still visible, this
+  // forces their TextObjects to write idle/blank content to the canvas so
+  // stale health data doesn't bleed through onto other panes.
+  const clearDisplay = (): void => {
+    lastRefresh.value = "---";
+    const blank = nodes.peek().map((n) => ({
+      ...n,
+      statusLabel: "---",
+      s3: { status: "warn" as const, summary: "---" },
+      admin: { status: "warn" as const, summary: "---" },
+      ping: { status: "warn" as const, summary: "---" },
+      ssh: { status: "warn" as const, summary: "---" },
+      status: "warn" as const,
+    }));
+    nodes.value = blank;
+    metrics.value = metrics.peek().map((m) => ({ ...m, value: "---", detail: "---", status: "idle" as const }));
+  };
+
   const scrollLogUp = (): void => {
     const maxOffset = Math.max(0, eventLog.peek().length - logLines);
     eventScroll.value = Math.min(maxOffset, eventScroll.peek() + 1);
@@ -399,6 +422,7 @@ export function createHealthPane(
 
   return {
     setVisible,
+    clearDisplay,
     applySnapshot,
     appendEvent,
     scrollLogUp,
